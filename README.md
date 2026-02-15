@@ -150,20 +150,17 @@ GROQ_API_KEY=           # For Groq (free at console.groq.com)
 # (Edge Function secrets), not in this .env file.
 ```
 
-## The Full Version
+## What's Next
 
-This free relay covers the essentials. The full version in the [AI Productivity Hub](https://skool.com/autonomee) community unlocks:
+This relay is step one. It works standalone, forever. But it's also the foundation for something much bigger.
 
-- **6 Specialized AI Agents** — Research, Content, Finance, Strategy, Critic + General orchestrator via Telegram forum topics
-- **VPS Deployment** — Always-on cloud server with hybrid mode ($2-5/month)
-- **Real Integrations** — Gmail, Calendar, Notion connected via MCP
-- **Human-in-the-Loop** — Claude asks before taking actions via inline buttons
-- **Voice & Phone Calls** — Bot speaks back via ElevenLabs, calls when urgent
-- **Fallback AI Models** — Auto-switch to OpenRouter or Ollama when Claude is down
-- **Production Infrastructure** — Auto-deploy, watchdog, uninstall scripts
+200+ builders are running the full version right now — their AI calls them when something is urgent, runs board meetings with six specialized agents, sends emails with approval buttons, and never goes offline.
 
-We also help you personalize it for your business, or package it as a product for your clients.
+The key: it's not just about features. It's about **mastering Claude Code** — CLAUDE.md files, MCP servers, hooks, skills. That's what turns a chatbot into real AI infrastructure. The community and course teach you that.
 
+**[Read the full story → WHATS-NEXT.md](WHATS-NEXT.md)**
+
+**Free course (6 lessons):** [autonomee.ai/telegram-bot-course](https://autonomee.ai/telegram-bot-course)
 **Subscribe on YouTube:** [youtube.com/@GodaGo](https://youtube.com/@GodaGo)
 **Join the community:** [skool.com/autonomee](https://skool.com/autonomee)
 
