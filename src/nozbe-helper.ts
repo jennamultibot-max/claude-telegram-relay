@@ -260,3 +260,58 @@ export async function getTaskDetails(taskId: string): Promise<NozbeTask> {
     throw error;
   }
 }
+
+/**
+ * Data for creating a new task
+ */
+export interface CreateTaskData {
+  /** Task name/title (required) */
+  name: string;
+  /** Project ID to assign task to (required) */
+  projectId: string;
+  /** Optional due date in ISO format */
+  dueDate?: string;
+  /** Optional priority level (0-3) */
+  priority?: number;
+}
+
+/**
+ * Create a new task in Nozbe
+ * @param data Task data
+ * @returns Promise<NozbeTask> Created task
+ */
+export async function createTask(data: CreateTaskData): Promise<NozbeTask> {
+  try {
+    const body: Record<string, unknown> = {
+      name: data.name,
+      project_id: data.projectId,
+    };
+
+    if (data.dueDate) {
+      body.due_date = data.dueDate;
+    }
+
+    if (data.priority !== undefined) {
+      body.priority = data.priority;
+    }
+
+    const response = await fetchNozbe("/api/tasks", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+
+    if (response.status === 400) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.message || "Falta el nombre de la tarea");
+    }
+
+    if (!response.ok) {
+      throw new Error(`Failed to create task: ${response.statusText}`);
+    }
+
+    return (await response.json()) as NozbeTask;
+  } catch (error) {
+    console.error("Error creating task:", error);
+    throw error;
+  }
+}
