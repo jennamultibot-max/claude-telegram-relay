@@ -6,12 +6,15 @@
  *   [REMEMBER: fact]
  *   [GOAL: text | DEADLINE: date]
  *   [DONE: search text]
+ *   [NOZBE_TASK: task name @project?]
+ *   [NOZBE_COMMENT: task_id | comment]
  *
- * The relay parses these tags, saves to Supabase, and strips them
+ * The relay parses these tags, saves to Supabase/Nozbe, and strips them
  * from the response before sending to the user.
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { createTask, addComment, getProjects, NozbeProject } from "./nozbe-helper.ts";
 
 // Goal interface
 interface Goal {
@@ -31,9 +34,89 @@ export async function processMemoryIntents(
   supabase: SupabaseClient | null,
   response: string
 ): Promise<string> {
-  if (!supabase) return response;
-
   let clean = response;
+
+  // [NOZBE_TASK: task name @project?] - Create task in Nozbe (works without Supabase)
+  for (const match of response.matchAll(/\[NOZBE_TASK:\s*(.+?)\]/gi)) {
+    try {
+      const taskInput = match[1].trim();
+      let taskName = taskInput;
+      let projectName: string | undefined;
+
+      // Check for @project pattern
+      const projectMatch = taskInput.match(/@(\w+)$/);
+      if (projectMatch) {
+        projectName = projectMatch[1];
+        taskName = taskInput.replace(/@\w+$/, "").trim();
+      }
+
+      let projectId: string | undefined;
+
+      // If project specified, find it
+      if (projectName) {
+        const projects = await getProjects();
+        const project = projects.find((p: NozbeProject) =>
+          p.name.toLowerCase().includes(projectName!.toLowerCase())
+        );
+        if (project) {
+          projectId = project.id;
+        }
+      }
+
+      // Get default project if none specified
+      if (!projectId) {
+        const projects = await getProjects();
+        const openProjects = projects.filter((p: NozbeProject) =>
+          p.is_open !== false && !p.is_single_actions
+        );
+
+        if (openProjects.length > 0) {
+          const preferredProject = openProjects.find((p: NozbeProject) =>
+            p.name.toLowerCase().includes("jenna")
+          );
+          projectId = preferredProject?.id || openProjects[0].id;
+        }
+      }
+
+      if (projectId) {
+        const task = await createTask({
+          name: taskName,
+          projectId: projectId,
+        });
+        clean = clean.replace(match[0], `✅ Tarea creada: **${task.name}** (ID: \`${task.id}\`)`);
+      }
+    } catch (error) {
+      console.error("Nozbe task creation error:", error);
+      clean = clean.replace(match[0], `⚠️ Error creando tarea: ${error instanceof Error ? error.message : "Unknown"}`);
+    }
+  }
+
+  // [NOZBE_COMMENT: task_id | comment] - Add comment to task (works without Supabase)
+  for (const match of response.matchAll(/\[NOZBE_COMMENT:\s*(.+?)\]/gi)) {
+    try {
+      const parts = match[1].split("|").map(s => s.trim());
+      if (parts.length >= 2) {
+        const taskId = parts[0];
+        const comment = parts.slice(1).join("|").trim(); // Rejoin in case comment contains |
+
+        if (comment.length < 2) {
+          clean = clean.replace(match[0], `⚠️ El comentario debe tener al menos 2 caracteres`);
+          continue;
+        }
+
+        await addComment(taskId, comment);
+        clean = clean.replace(match[0], `✅ Comentario añadido a tarea \`${taskId}\``);
+      } else {
+        clean = clean.replace(match[0], `⚠️ Formato incorrecto. Usa: [NOZBE_COMMENT: task_id | comentario]`);
+      }
+    } catch (error) {
+      console.error("Nozbe comment error:", error);
+      clean = clean.replace(match[0], `⚠️ Error añadiendo comentario: ${error instanceof Error ? error.message : "Unknown"}`);
+    }
+  }
+
+  // Skip Supabase operations if not available
+  if (!supabase) return clean.trim();
 
   // [REMEMBER: fact to store]
   for (const match of response.matchAll(/\[REMEMBER:\s*(.+?)\]/gi)) {

@@ -730,10 +730,19 @@ bot.command("tarea", async (ctx) => {
     // Get default project if none specified
     if (!projectId) {
       const projects = await NozbeCommands.getProjects();
-      if (projects.length > 0) {
-        projectId = projects[0].id; // Use first project as default
+      // Filter only open projects that are not single actions
+      const openProjects = projects.filter((p: NozbeProject) =>
+        p.is_open !== false && !p.is_single_actions
+      );
+
+      if (openProjects.length > 0) {
+        // Prefer JennaMultibot or use first open project
+        const preferredProject = openProjects.find((p: NozbeProject) =>
+          p.name.toLowerCase().includes("jenna")
+        );
+        projectId = preferredProject?.id || openProjects[0].id;
       } else {
-        await ctx.reply("❌ No hay proyectos en Nozbe. Crea uno primero.");
+        await ctx.reply("❌ No hay proyectos abiertos en Nozbe. Crea o abre un proyecto primero.");
         return;
       }
     }
@@ -1189,6 +1198,17 @@ function buildPrompt(
       "\n[REMEMBER: fact to store]" +
       "\n[GOAL: goal text | DEADLINE: optional date]" +
       "\n[DONE: search text for completed goal]"
+  );
+
+  parts.push(
+    "\nNOZBE INTEGRATION - IMPORTANT:" +
+      "\nWhen the user wants to create a task or add a comment, ALWAYS use these tags (they execute automatically):" +
+      "\n- [NOZBE_TASK: task name] or [NOZBE_TASK: task name @project]" +
+      "\n- [NOZBE_COMMENT: task_id | comment text]" +
+      "\n\nExamples:" +
+      "\nUser: 'recuerda comprar leche' → Response: '¡Entendido! [NOZBE_TASK: Comprar leche]'" +
+      "\nUser: 'añade a la tarea xxx que lleve la tarjeta' → Response: '✅ [NOZBE_COMMENT: xxx | llevar tarjeta]'" +
+      "\n\nCRITICAL: Never ask for permission or give manual instructions. Use the tags directly."
   );
 
   parts.push(

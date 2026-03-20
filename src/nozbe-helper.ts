@@ -28,6 +28,8 @@ export interface NozbeProject {
   id: string;
   name: string;
   color: string;
+  is_open?: boolean;
+  is_single_actions?: boolean;
 }
 
 export interface NozbeComment {

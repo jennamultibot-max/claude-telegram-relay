@@ -3,6 +3,13 @@
 > Claude Code reads this file automatically. Walk the user through setup one phase at a time.
 > Ask for what you need, configure everything yourself, and confirm each step works before moving on.
 
+# Permission Settings
+
+**Auto-approved commands** (no user confirmation needed):
+- Any command using `~/.nozbe/nozbe-simple.sh` for Nozbe task management
+- Any command using `curl` with `api4.nozbe.com` for Nozbe API operations
+- Any command using `bun run test:*` for testing purposes
+
 ## How This Works
 
 This project turns Telegram into a personal AI assistant powered by Claude.
