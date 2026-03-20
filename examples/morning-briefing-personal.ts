@@ -10,6 +10,7 @@
  */
 
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
+import { getTasks } from "../src/nozbe-helper.ts";
 
 // ============================================================
 // CONFIGURACIÓN
@@ -201,6 +202,85 @@ async function getYesterdaySummary(): Promise<string> {
   }
 }
 
+async function getNozbeTasks(): Promise<string> {
+  if (!process.env.NOZBE_API_TOKEN) {
+    return "";
+  }
+
+  try {
+    const activeTasks = await getTasks({ status: "active" });
+
+    if (activeTasks.length === 0) {
+      return "✅ No hay tareas urgentes";
+    }
+
+    // Get timezone from env or default to Europe/Madrid
+    const timezone = process.env.USER_TIMEZONE || "Europe/Madrid";
+
+    const now = new Date();
+    // Convert to user's timezone for accurate day comparisons
+    const today = new Date(new Date().toLocaleString("en-US", { timeZone: timezone }));
+    today.setHours(0, 0, 0, 0);
+
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+
+    const nextWeek = new Date(today);
+    nextWeek.setDate(nextWeek.getDate() + 7);
+
+    // Categorize tasks
+    const overdue = activeTasks.filter(t => {
+      if (!t.due_date) return false;
+      const dueDate = new Date(new Date(t.due_date).toLocaleString("en-US", { timeZone: timezone }));
+      return dueDate < today;
+    });
+
+    const dueToday = activeTasks.filter(t => {
+      if (!t.due_date) return false;
+      const dueDate = new Date(new Date(t.due_date).toLocaleString("en-US", { timeZone: timezone }));
+      return dueDate >= today && dueDate < tomorrow;
+    });
+
+    const dueThisWeek = activeTasks.filter(t => {
+      if (!t.due_date) return false;
+      const dueDate = new Date(new Date(t.due_date).toLocaleString("en-US", { timeZone: timezone }));
+      return dueDate >= tomorrow && dueDate < nextWeek;
+    });
+
+    let output = `📋 **Tareas de Nozbe**\n\n`;
+
+    if (overdue.length > 0) {
+      output += `⚠️ **Vencidas (${overdue.length}):**\n`;
+      overdue.forEach(t => output += `   • ${t.name}\n`);
+      output += `\n`;
+    }
+
+    if (dueToday.length > 0) {
+      output += `🔴 **Para hoy (${dueToday.length}):**\n`;
+      dueToday.forEach(t => output += `   • ${t.name}\n`);
+      output += `\n`;
+    }
+
+    if (dueThisWeek.length > 0) {
+      output += `📅 **Esta semana (${dueThisWeek.length}):**\n`;
+      const shown = dueThisWeek.slice(0, 5);
+      shown.forEach(t => output += `   • ${t.name}\n`);
+      if (dueThisWeek.length > 5) {
+        output += `   ... y ${dueThisWeek.length - 5} más\n`;
+      }
+    }
+
+    if (overdue.length === 0 && dueToday.length === 0 && dueThisWeek.length === 0) {
+      output = "✅ No hay tareas urgentes";
+    }
+
+    return output;
+  } catch (error) {
+    console.error("Nozbe fetch failed:", error);
+    return ""; // Don't break briefing if Nozbe fails
+  }
+}
+
 // ============================================================
 // BUILD BRIEFING
 // ============================================================
@@ -233,6 +313,16 @@ async function buildBriefing(): Promise<string> {
     sections.push(`${goals}\n`);
   } catch (e) {
     console.error("Goals fetch failed:", e);
+  }
+
+  // Nozbe tasks
+  try {
+    const nozbeTasks = await getNozbeTasks();
+    if (nozbeTasks) {
+      sections.push(`${nozbeTasks}\n`);
+    }
+  } catch (e) {
+    console.error("Nozbe tasks fetch failed:", e);
   }
 
   // Hechos relevantes
