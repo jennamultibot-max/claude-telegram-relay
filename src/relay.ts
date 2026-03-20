@@ -750,6 +750,31 @@ bot.command("tarea", async (ctx) => {
   }
 });
 
+bot.command("completar", async (ctx) => {
+  const taskId = ctx.message.text.split(" ")[1]?.trim();
+  console.log(`Completar command: ${taskId}`);
+
+  await ctx.replyWithChatAction("typing");
+
+  // Validate task ID
+  if (!taskId) {
+    await ctx.reply("❌ Necesito el ID de la tarea. Ej: `/completar abc123`");
+    return;
+  }
+
+  try {
+    const success = await NozbeCommands.complete(taskId);
+
+    if (success) {
+      await ctx.reply("✅ Tarea completada");
+    } else {
+      await ctx.reply("❌ No se pudo completar la tarea");
+    }
+  } catch (error) {
+    await ctx.reply(`❌ Error: ${error instanceof Error ? error.message : "Unknown error"}`);
+  }
+});
+
 // Text messages
 bot.on("message:text", async (ctx) => {
   const text = ctx.message.text;
