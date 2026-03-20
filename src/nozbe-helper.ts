@@ -430,3 +430,31 @@ function getStatusEmoji(task: NozbeTask): string {
 
   return "📋";
 }
+
+// ============================================================
+// COMMON COMMANDS (like GwsCommands)
+// ============================================================
+
+/**
+ * Convenience export for common Nozbe operations
+ * Pattern matches existing GwsCommands for consistency
+ */
+export const NozbeCommands = {
+  listActive: () => getTasks({ status: "active" }),
+  listByProject: (projectId: string) => getTasks({ projectId }),
+  listDueToday: () => {
+    const today = getUserToday();
+    today.setHours(23, 59, 59, 999);
+    return getTasks({ dueBefore: today.toISOString(), status: "active" });
+  },
+  listOverdue: () => {
+    const now = getUserNow();
+    return getTasks({ dueBefore: now.toISOString(), status: "active" });
+  },
+  create: createTask,
+  complete: completeTask,
+  comment: addComment,
+  getProjects,
+  getTasks,
+  formatTasksList,
+};
