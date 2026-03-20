@@ -6,7 +6,9 @@
 
 ## Overview
 
-Integrate Nozbe task management into the claude-telegram-relay project, enabling full task CRUD operations (create, read, update, delete, comment) through Telegram commands and natural language queries. Include Nozbe tasks in the daily morning briefing.
+Integrate Nozbe task management into the claude-telegram-relay project, enabling core task operations (create, read, complete, comment) through Telegram commands and natural language queries. Include Nozbe tasks in the daily morning briefing.
+
+**Scope:** Create, list, complete, and comment on tasks. Task editing (name, date, priority updates) and deletion are explicitly out of scope for this implementation.
 
 ## Problem Statement
 
@@ -14,7 +16,6 @@ User needs to manage Nozbe tasks directly from Telegram bot:
 - Create tasks
 - Complete tasks
 - List tasks (active, by project, by date)
-- Edit tasks
 - Add comments to tasks
 - View tasks in morning briefing
 
@@ -59,18 +60,50 @@ Morning Briefing → nozbe-helper.ts → Nozbe API
 Authorization: apikey <API_TOKEN>
 ```
 
-**Key Endpoints:**
+**Endpoints used in this implementation:**
 - `GET /api/tasks` - List tasks with filtering
 - `POST /api/tasks` - Create task
-- `PUT /api/tasks/:id` - Update task
-- `DELETE /api/tasks/:id` - Delete task
-- `POST /api/tasks/:id/comment` - Add comment
+- `POST /api/tasks/:id/comment` - Add comment to task
+- `GET /api/tasks/:id` - Get single task details
 - `GET /api/projects` - List projects
+
+**Note:** Nozbe API supports `PUT /api/tasks/:id` (update) and `DELETE /api/tasks/:id` (delete), but these are out of scope for this implementation. See Future Enhancements.
 
 **Filtering:** LHS bracket notation
 - `ended_at=null` for active tasks
 - `due_date<2026-03-21` for tasks due before date
 - `project_id=<id>` for specific project
+
+**Example API Responses:**
+
+```json
+// GET /api/tasks?ended_at=null
+{
+  "tasks": [
+    {
+      "id": "abc123",
+      "name": "Comprar leche",
+      "project_id": "proj456",
+      "status": "active",
+      "due_date": "2026-03-21T23:59:59Z",
+      "priority": 1,
+      "created_at": "2026-03-20T10:00:00Z",
+      "comments_count": 2
+    }
+  ]
+}
+
+// GET /api/projects
+{
+  "projects": [
+    {
+      "id": "proj456",
+      "name": "Personal",
+      "color": "#3498db"
+    }
+  ]
+}
+```
 
 ## Data Structures
 
@@ -155,15 +188,34 @@ export const NozbeCommands = {
 
 ### Command List
 
-| Command | Description | Example |
-|---------|-------------|---------|
-| `/nozbe` | List active tasks | `/nozbe` |
-| `/nozbe <project>` | List tasks in project | `/nozbe Trabajo` |
-| `/tarea <name>` | Create task | `/tarea Revisar reporte` |
-| `/tarea <name> @<project>` | Create in project | `/tarea Llamar cliente @Trabajo` |
-| `/completar <id>` | Complete task | `/completar abc123` |
-| `/comentario <id> <text>` | Add comment | `/comentario abc123 En progreso` |
-| `/tasks` | Alias for /nozbe | `/tasks` |
+| Command | Description | Example | Validation |
+|---------|-------------|---------|------------|
+| `/nozbe` | List active tasks | `/nozbe` | None |
+| `/nozbe <project>` | List tasks in project | `/nozbe Trabajo` | Project name required |
+| `/tarea <name>` | Create task | `/tarea Revisar reporte` | Name required (min 2 chars) |
+| `/tarea <name> @<project>` | Create in project | `/tarea Llamar cliente @Trabajo` | Name required, project optional |
+| `/completar <id>` | Complete task | `/completar abc123` | Valid task ID required |
+| `/comentario <id> <text>` | Add comment | `/comentario abc123 En progreso` | Task ID + text (min 2 chars) required |
+| `/tasks` | Alias for /nozbe | `/tasks` | None |
+
+### Command Parsing Specifications
+
+**`/comentario <id> <text>`:**
+- Parse by splitting on first space after command
+- First argument: task ID (required, alphanumeric string)
+- Second argument onwards: comment text (required, min 2 characters, rest of line)
+- Error handling:
+  - Missing task ID: "❌ Necesito el ID de la tarea. Ej: `/comentario abc123 Tu texto`"
+  - Missing comment text: "❌ Necesito el texto del comentario. Ej: `/comentario abc123 Tu texto`"
+  - Invalid task ID: "❌ No encontré esa tarea. Verifica el ID"
+
+**`/tarea <name> [@<project>]`:**
+- Parse entire line as task name
+- Check for `@project` pattern at end using regex: `/@(\w+)$/`
+- Extract project name if present, otherwise use default project
+- Error handling:
+  - Empty task name: "❌ La tarea necesita un nombre. Ej: `/tarea Comprar leche`"
+  - Project name not found: "⚠️ Proyecto '@{name}' no encontrado. Creando en proyecto por defecto."
 
 ### Natural Language Triggers
 
@@ -178,64 +230,54 @@ Query examples:
 - "completa la tarea del proyecto X"
 - "añade un comentario a la tarea..."
 
+**Note:** Natural language processing delegates to Claude. When user says "completa la tarea del proyecto X", Claude will identify which task based on conversation context and available task list.
+
 ## Morning Briefing Integration
 
 ### New Section in Briefing
 
+**Section Title:** "📋 **Tareas de Nozbe**"
+
+**Purpose:** Display urgent and upcoming tasks from Nozbe to help user prioritize their day.
+
+**Data to Display:**
+
+1. **Overdue Tasks** (⚠️ icon)
+   - All active tasks with `due_date < today` (in user's timezone)
+   - Format: "⚠️ **Vencidas (N):**" followed by bulleted list
+   - Show task name only (not full details to keep briefing concise)
+
+2. **Due Today** (🔴 icon)
+   - All active tasks with `today <= due_date < tomorrow` (in user's timezone)
+   - Format: "🔴 **Para hoy (N):**" followed by bulleted list
+
+3. **Due This Week** (📅 icon)
+   - All active tasks with `tomorrow <= due_date < today + 7 days`
+   - Limit to 5 tasks max (show "y X más..." if more)
+   - Format: "📅 **Esta semana (N):**" followed by bulleted list
+
+4. **No Urgent Tasks**
+   - If all categories are empty, show: "✅ No hay tareas urgentes"
+
+**Timezone Handling:**
+- Use `USER_TIMEZONE` from `.env` for date comparisons
+- Nozbe dates are assumed to be in user's local timezone
+- Convert Nozbe dates to midnight in user's timezone for accurate day comparisons
+
+**Error Handling:**
+- If `NOZBE_API_TOKEN` is not set, omit section silently (no error message)
+- If API call fails, log error and omit section (don't break entire briefing)
+- Return empty string (section will not appear in briefing)
+
+**Function Signature:**
 ```typescript
-async function getNozbeTasks(): Promise<string> {
-  if (!process.env.NOZBE_API_TOKEN) return "";
-
-  try {
-    const activeTasks = await getTasks({ status: "active" });
-
-    const now = new Date();
-    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const tomorrow = new Date(today.getTime() + 24 * 60 * 60 * 1000);
-    const nextWeek = new Date(today.getTime() + 7 * 24 * 60 * 60 * 1000);
-
-    const overdue = activeTasks.filter(t =>
-      t.due_date && new Date(t.due_date) < today
-    );
-
-    const dueToday = activeTasks.filter(t =>
-      t.due_date && new Date(t.due_date) >= today && new Date(t.due_date) < tomorrow
-    );
-
-    const dueThisWeek = activeTasks.filter(t =>
-      t.due_date && new Date(t.due_date) >= tomorrow && new Date(t.due_date) < nextWeek
-    );
-
-    let output = `📋 **Tareas de Nozbe**\n\n`;
-
-    if (overdue.length > 0) {
-      output += `⚠️ **Vencidas (${overdue.length}):**\n`;
-      overdue.forEach(t => output += `   • ${t.name}\n`);
-      output += `\n`;
-    }
-
-    if (dueToday.length > 0) {
-      output += `🔴 **Para hoy (${dueToday.length}):**\n`;
-      dueToday.forEach(t => output += `   • ${t.name}\n`);
-      output += `\n`;
-    }
-
-    if (dueThisWeek.length > 0) {
-      output += `📅 **Esta semana (${dueThisWeek.length}):**\n`;
-      dueThisWeek.slice(0, 5).forEach(t => output += `   • ${t.name}\n`);
-    }
-
-    if (overdue.length === 0 && dueToday.length === 0 && dueThisWeek.length === 0) {
-      output += `✅ No hay tareas urgentes`;
-    }
-
-    return output;
-  } catch (error) {
-    console.error("Nozbe fetch failed:", error);
-    return ""; // Don't break briefing if Nozbe fails
-  }
-}
+async function getNozbeTasks(): Promise<string>
 ```
+
+**Behavior:**
+- Returns formatted section string as shown above
+- Returns empty string if no data or on error
+- Section should be inserted after "Goals Activos" and before "Cosas Importantes para Recordar"
 
 ## Error Handling
 
@@ -296,7 +338,8 @@ async function fetchNozbe(
 
 - Morning briefing continues if Nozbe API fails
 - Log error but don't crash
-- Show brief message: "⚠️ No se pudieron cargar las tareas de Nozbe"
+- Return empty string (section will be omitted from briefing, not show error)
+- Bot commands show user-friendly error messages on failures
 
 ## Testing
 
@@ -305,44 +348,96 @@ async function fetchNozbe(
 Verify basic API access and operations:
 
 1. **Connection Test**
-   - Authenticate with token
-   - List projects
-   - List active tasks
+   - Authenticate with token from `.env`
+   - List projects (verify API returns 200 and array)
+   - List active tasks (verify filter `ended_at=null` works)
 
 2. **CRUD Operations**
-   - Create test task
-   - Add comment to test task ✨
-   - Complete test task
-   - Cleanup (delete test task)
+   - Create test task with known name "Claude Test Task [timestamp]"
+   - Retrieve created task to verify it exists
+   - Add comment "Test comment from automated test"
+   - Verify comment appears in task details (check `comments_count` increased)
+   - Complete task (set `ended_at`)
+   - Cleanup: delete completed test task
 
 3. **Edge Cases**
-   - Invalid token
-   - Non-existent task ID
-   - Empty comment
-   - Non-existent project ID
+   - Invalid token: expect 401, show helpful error
+   - Non-existent task ID: expect 404, show "task not found" message
+   - Empty comment: expect 400 or 422, show validation error
+   - Non-existent project ID when creating task: expect 400, show error
 
 ### test-nozbe-commands.ts
 
-Test Telegram command handlers:
+Test Telegram command parsing and execution:
 
-1. `/nozbe` - List tasks
-2. `/tarea Test task` - Create task
-3. `/comentario <id> Test comment` - Add comment ✨
-4. `/completar <id>` - Complete task
-5. Natural language detection
+1. **`/nozbe` command**
+   - Verify it calls `getTasks({ status: "active" })`
+   - Verify output is formatted with emojis and task names
+   - Test with no tasks: verify empty state message
+
+2. **`/tarea` command**
+   - Test basic task creation: `/tarea Test task from commands`
+   - Verify task is created in default project
+   - Test with project: `/tarea Test @ProjectName`
+   - Verify project name is parsed correctly using regex
+   - Test empty name: verify validation error message
+   - Test project name not found: verify fallback to default
+
+3. **`/comentario` command**
+   - Test with valid ID and text: `/comentario abc123 Test comment`
+   - Verify parsing splits on first space after command
+   - Test missing task ID: verify error "Necesito el ID de la tarea"
+   - Test missing comment text: verify error "Necesito el texto del comentario"
+   - Test invalid task ID: verify "No encontré esa tarea" message
+
+4. **`/completar` command**
+   - Test with valid task ID: verify task is marked completed
+   - Test with invalid ID: verify error message
+
+5. **Natural language detection**
+   - Test query "¿qué tareas tengo?" triggers `fetchNozbeIfNeeded()`
+   - Verify active tasks are included in Claude context
+   - Test query "tareas pendientes de hoy" filters by today
+   - Test keywords: "tarea", "nozbe", "pendiente", "completar"
 
 ### Morning Briefing Test
 
-Execute briefing and verify:
-- Nozbe section appears
-- Overdue tasks marked correctly
-- Doesn't break if Nozbe API fails
+Execute `morning-briefing-personal.ts` and verify:
+
+1. **Nozbe section appears**
+   - Verify section title "📋 **Tareas de Nozbe**" appears
+   - Verify section appears after Goals and before Facts
+   - Test with `NOZBE_API_TOKEN` unset: verify section is omitted (not error)
+
+2. **Task categorization**
+   - Create overdue task (yesterday): verify appears in ⚠️ Vencidas
+   - Create task due today: verify appears in 🔴 Para hoy
+   - Create task due in 3 days: verify appears in 📅 Esta semana
+   - Create task with no due date: verify does NOT appear in briefing
+   - Create completed task: verify does NOT appear in briefing
+
+3. **Timezone handling**
+   - Set `USER_TIMEZONE=Europe/Madrid`
+   - Create task due at 23:59 local time: verify appears in correct day
+   - Create task due at 00:01 local time: verify appears in next day
+
+4. **Error handling**
+   - Temporarily invalidate API token: verify briefing completes without Nozbe section
+   - Check logs for error message: "Nozbe fetch failed"
+   - Verify other sections (Goals, Facts) still appear
+
+5. **Edge cases**
+   - Empty task list: verify "✅ No hay tareas urgentes" message
+   - More than 5 tasks this week: verify only 5 shown with "y X más..."
+   - All categories empty: verify message instead of empty section
 
 ### Test Command
 
 ```bash
 bun run test:nozbe
 ```
+
+Runs both test files in sequence. Both must pass (exit code 0).
 
 ## Implementation Steps
 
