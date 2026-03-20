@@ -13,6 +13,16 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+// Goal interface
+interface Goal {
+  id: string;
+  content: string;
+  deadline: string | null;
+  priority: number;
+  completed_at: string | null;
+  created_at: string;
+}
+
 /**
  * Parse Claude's response for memory intent tags.
  * Saves facts/goals to Supabase and returns the cleaned response.
@@ -125,20 +135,76 @@ export async function getRelevantContext(
   if (!supabase) return "";
 
   try {
-    const { data, error } = await supabase.functions.invoke("search", {
-      body: { query, match_count: 5, table: "messages" },
+    const { data, error } = await supabase.functions.invoke('search', {
+      body: { query, match_count: 5, table: 'messages', match_threshold: 0.3 },
     });
 
-    if (error || !data?.length) return "";
+    if (error) {
+      console.error("Semantic search error:", error);
+      return "";
+    }
 
+    if (!data?.length) {
+      console.log("No relevant context found for query:", query);
+      return "";
+    }
+
+    console.log(`Found ${data.length} relevant messages for query: ${query}`);
     return (
       "RELEVANT PAST MESSAGES:\n" +
       data
         .map((m: any) => `[${m.role}]: ${m.content}`)
         .join("\n")
     );
-  } catch {
-    // Search not available yet (Edge Functions not deployed) — that's fine
+  } catch (err) {
+    console.error("Semantic search error:", err);
     return "";
   }
+}
+
+// Get active goals from memory table
+export async function getActiveGoals(): Promise<Goal[]> {
+  if (!supabase) return [];
+
+  try {
+    const { data, error } = await supabase
+      .from("memory")
+      .select("id, content, deadline, priority, completed_at, created_at")
+      .eq("type", "goal")
+      .is("completed_at", null)
+      .order("priority", { ascending: false, nullsFirst: false })
+      .limit(50);
+
+    if (error) {
+      console.error("Error fetching active goals:", error);
+      return [];
+    }
+
+    return (data || []).map(row => ({
+      id: row.id,
+      content: row.content,
+      deadline: row.deadline,
+      priority: row.priority,
+      completed_at: row.completed_at,
+      created_at: row.created_at
+    }));
+  } catch (err) {
+    console.error("Supabase connection error:", err);
+    return [];
+  }
+}
+
+// Get urgent goals (deadline within 24 hours)
+export async function getUrgentGoals(hoursThreshold: number = 24): Promise<Goal[]> {
+  const goals = await getActiveGoals();
+  const now = new Date();
+
+  return goals.filter(goal => {
+    if (!goal.deadline) return false;
+
+    const deadline = new Date(goal.deadline);
+    const hoursUntil = (deadline.getTime() - now.getTime()) / (1000 * 60 * 60);
+
+    return hoursUntil <= hoursThreshold;
+  });
 }

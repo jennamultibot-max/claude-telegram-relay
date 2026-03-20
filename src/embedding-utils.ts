@@ -5,7 +5,8 @@
  * to inform proactive notification decisions.
  */
 
-import { createClient } from "@supabase/supabase-js";
+import { createClient, SupabaseClient } from "@supabase/supabase-js";
+import { safeSupabaseCall, safeEmbeddingGeneration, logInfo, logError } from "./error-handling.js";
 
 // Configuration constants
 const DEFAULT_MATCH_COUNT = 5;
@@ -139,24 +140,34 @@ export async function getRelevantContext(tasks: Goal[]): Promise<string> {
     // Build search query from task content
     const queryText = tasks.map((task) => task.content).join(" ");
 
-    // Generate embedding for the query
-    const embedding = await generateEmbedding(queryText);
+    // Generate embedding for the query with timeout and fallback
+    const embedding = await safeEmbeddingGeneration(queryText, generateEmbedding);
 
     if (!embedding) {
       console.log("Failed to generate embedding, skipping semantic context search");
+      await logInfo(
+        "semantic_search_fallback",
+        "Using plain text fallback instead of embeddings",
+        { taskCount: tasks.length }
+      );
       return "";
     }
 
     // Search conversational memory using embeddings via match_memory RPC
-    const { data: relevantMemory, error } = await supabase.rpc("match_memory", {
-      query_embedding: embedding,
-      match_count: DEFAULT_MATCH_COUNT,
-    });
+    // Use safeSupabaseCall for retry logic
+    const relevantMemory = await safeSupabaseCall(
+      async () => {
+        const { data, error } = await supabase.rpc("match_memory", {
+          query_embedding: embedding,
+          match_count: DEFAULT_MATCH_COUNT,
+        });
 
-    if (error) {
-      console.error("match_memory RPC error:", error);
-      return "";
-    }
+        if (error) throw error;
+        return data;
+      },
+      null,
+      "match_memory_rpc"
+    );
 
     if (!relevantMemory || relevantMemory.length === 0) {
       console.log("No relevant conversational context found for these tasks");
@@ -172,6 +183,7 @@ export async function getRelevantContext(tasks: Goal[]): Promise<string> {
         .join("\n") || ""
     );
   } catch (error) {
+    await logError("get_relevant_context_error", error, { taskCount: tasks.length });
     console.error("Unexpected error in getRelevantContext:", error);
     return "";
   }

@@ -50,11 +50,16 @@ function generatePlist(opts: {
   script: string;
   keepAlive: boolean;
   calendarIntervals?: { Hour: number; Minute: number }[];
+  startInterval?: number;
 }): string {
   const bunPath = findBunSync;
 
   let scheduling = "";
-  if (opts.calendarIntervals) {
+  if (opts.startInterval) {
+    scheduling = `
+    <key>StartInterval</key>
+    <integer>${opts.startInterval}</integer>`;
+  } else if (opts.calendarIntervals) {
     scheduling = `
     <key>StartCalendarInterval</key>
     <array>${opts.calendarIntervals
@@ -121,6 +126,7 @@ interface ServiceConfig {
   script: string;
   keepAlive: boolean;
   calendarIntervals?: { Hour: number; Minute: number }[];
+  startInterval?: number;
   description: string;
 }
 
@@ -133,17 +139,10 @@ const SERVICES: Record<string, ServiceConfig> = {
   },
   checkin: {
     label: "com.claude.smart-checkin",
-    script: "examples/smart-checkin.ts",
+    script: "examples/smart-checkin-personal.ts",
     keepAlive: false,
-    calendarIntervals: [
-      { Hour: 9, Minute: 0 },
-      { Hour: 10, Minute: 30 },
-      { Hour: 12, Minute: 0 },
-      { Hour: 14, Minute: 0 },
-      { Hour: 16, Minute: 0 },
-      { Hour: 18, Minute: 0 },
-    ],
-    description: "Smart check-ins (runs during work hours)",
+    startInterval: 1800, // 30 minutes in seconds
+    description: "Smart check-ins (runs every 30 minutes)",
   },
   briefing: {
     label: "com.claude.morning-briefing",
@@ -186,6 +185,33 @@ async function installService(name: string, config: ServiceConfig): Promise<bool
   return true;
 }
 
+async function uninstallService(name: string, config: ServiceConfig): Promise<boolean> {
+  const plistPath = join(LAUNCH_AGENTS, `${config.label}.plist`);
+
+  if (!existsSync(plistPath)) {
+    console.log(`  ${dim("⊘")} Not installed: ${config.label}`);
+    return true;
+  }
+
+  // Unload
+  const unload = Bun.spawn(["launchctl", "unload", plistPath], {
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  await unload.exited;
+
+  // Remove plist file
+  const { unlink } = await import("fs/promises");
+  try {
+    await unlink(plistPath);
+    console.log(`  ${PASS} Removed ${config.label}`);
+    return true;
+  } catch (err: any) {
+    console.log(`  ${FAIL} Failed to remove plist: ${err.message}`);
+    return false;
+  }
+}
+
 async function main() {
   if (process.platform !== "darwin") {
     console.log(`\n  ${FAIL} This script is for macOS only.`);
@@ -195,8 +221,42 @@ async function main() {
 
   findBunSync = await findBun();
 
-  // Parse --service flag
+  // Parse arguments
   const args = process.argv.slice(2);
+
+  // Check for --unload flag
+  if (args.includes("--unload")) {
+    console.log("");
+    console.log(bold("  Uninstall launchd Services"));
+    console.log("");
+
+    // Determine which services to uninstall
+    const serviceIdx = args.indexOf("--service");
+    const toUninstall = serviceIdx !== -1 && args[serviceIdx + 1] !== "all"
+      ? [args[serviceIdx + 1]]
+      : Object.keys(SERVICES);
+
+    let allOk = true;
+    for (const name of toUninstall) {
+      const config = SERVICES[name];
+      if (!config) {
+        console.log(`  ${FAIL} Unknown service: ${name}`);
+        allOk = false;
+        continue;
+      }
+      const ok = await uninstallService(name, config);
+      if (!ok) allOk = false;
+    }
+
+    console.log("");
+    if (allOk) {
+      console.log(`  ${green("Done!")} Services uninstalled.`);
+    }
+    console.log("");
+    return;
+  }
+
+  // Parse --service flag
   const serviceIdx = args.indexOf("--service");
   const serviceArg = serviceIdx !== -1 ? args[serviceIdx + 1] : "relay";
 

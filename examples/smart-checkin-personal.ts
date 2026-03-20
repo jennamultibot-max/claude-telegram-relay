@@ -17,6 +17,7 @@ import { createClient, SupabaseClient } from "@supabase/supabase-js";
 import { join, dirname } from "path";
 import { getRelevantContext, Goal } from "../src/embedding-utils.js";
 import { buildCheckinPrompt, CheckinContext, TaskInfo, DEFAULT_NOTIFICATION_RULES } from "../config/checkin-rules.js";
+import { safeSupabaseCall, logError, logInfo, sendTelegramWithRetry, processPendingTelegramRetry } from "../src/error-handling.js";
 
 const PROJECT_ROOT = dirname(dirname(import.meta.path));
 
@@ -101,28 +102,26 @@ function goalsToTaskInfo(goals: Goal[]): TaskInfo[] {
 async function getActiveGoals(): Promise<Goal[]> {
   if (!supabase) return [];
 
-  try {
-    const { data, error } = await supabase
-      .from("memory")
-      .select("id, content, deadline, priority")
-      .eq("type", "goal")
-      .order("priority", { ascending: false });
+  return safeSupabaseCall(
+    async () => {
+      const { data, error } = await supabase
+        .from("memory")
+        .select("id, content, deadline, priority")
+        .eq("type", "goal")
+        .order("priority", { ascending: false });
 
-    if (error) {
-      console.error("Error fetching goals:", error);
-      return [];
-    }
+      if (error) throw error;
 
-    return (data || []).map((goal) => ({
-      id: goal.id,
-      content: goal.content,
-      deadline: goal.deadline,
-      priority: goal.priority || 1,
-    }));
-  } catch (error) {
-    console.error("Error loading goals:", error);
-    return [];
-  }
+      return (data || []).map((goal) => ({
+        id: goal.id,
+        content: goal.content,
+        deadline: goal.deadline,
+        priority: goal.priority || 1,
+      }));
+    },
+    [],
+    "get_active_goals"
+  );
 }
 
 // ============================================================
@@ -130,23 +129,7 @@ async function getActiveGoals(): Promise<Goal[]> {
 // ============================================================
 
 async function sendTelegram(message: string): Promise<boolean> {
-  try {
-    const response = await fetch(
-      `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          chat_id: CHAT_ID,
-          text: message,
-        }),
-      }
-    );
-    return response.ok;
-  } catch (error) {
-    console.error("Telegram error:", error);
-    return false;
-  }
+  return sendTelegramWithRetry(BOT_TOKEN, CHAT_ID, message);
 }
 
 // ============================================================
@@ -235,6 +218,12 @@ async function main() {
     process.exit(1);
   }
 
+  // Process any pending Telegram retries first
+  const retryProcessed = await processPendingTelegramRetry(BOT_TOKEN, CHAT_ID);
+  if (retryProcessed) {
+    console.log("✅ Pending Telegram retry processed");
+  }
+
   // Actualizar el tiempo del último mensaje (llamado por el bot cuando hay actividad)
   // Esto se puede invocar externamente: node -e "require('./examples/smart-checkin-personal.ts').updateLastMessageTime()"
 
@@ -254,7 +243,12 @@ async function main() {
 
       console.log("✅ Check-in sent successfully!");
     } else {
-      console.error("❌ Failed to send check-in");
+      console.error("❌ Failed to send check-in (will retry in 5 minutes)");
+      await logInfo(
+        "checkin_deferred",
+        "Check-in message deferred due to Telegram failure",
+        { messageLength: message.length }
+      );
     }
   } else {
     console.log("ℹ️  No check-in needed");
