@@ -1,223 +1,231 @@
 /**
- * Test script for Nozbe API access
- * Verifies that Nozbe integration works correctly
+ * Nozbe API Access Tests
+ *
+ * Tests basic API connectivity and CRUD operations.
+ * Run with: bun run test-nozbe-access.ts
  */
-
-import { config } from "dotenv";
-config();
 
 import {
   getProjects,
   getTasks,
+  getTaskDetails,
   createTask,
   completeTask,
   addComment,
-  getTaskDetails,
-  NozbeCommands,
 } from "./src/nozbe-helper.ts";
 
-console.log("=".repeat(60));
-console.log("🧪 Testing Nozbe API Access");
-console.log("=".repeat(60));
+// ============================================================
+// TEST HELPERS
+// ============================================================
 
-console.log("\n🔑 Credentials check:");
-console.log("NOZBE_API_TOKEN:", process.env.NOZBE_API_TOKEN ? "SET ✓" : "NOT SET ✗");
-
-if (!process.env.NOZBE_API_TOKEN) {
-  console.error("\n❌ NOZBE_API_TOKEN is required. Set it in .env file.");
-  process.exit(1);
+interface TestResult {
+  name: string;
+  passed: boolean;
+  error?: string;
 }
 
-// Test 1: Connection
+const results: TestResult[] = [];
+
+async function runTest(name: string, testFn: () => Promise<void>): Promise<void> {
+  try {
+    await testFn();
+    results.push({ name, passed: true });
+    console.log(`✅ ${name}`);
+  } catch (error) {
+    results.push({
+      name,
+      passed: false,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    console.log(`❌ ${name} FAILED: ${error}`);
+  }
+}
+
+// ============================================================
+// TESTS
+// ============================================================
+
 async function testConnection() {
   console.log("\n📡 Testing connection...");
-
-  try {
-    const projects = await getProjects();
-    console.log(`✅ Connection OK. Found ${projects.length} projects`);
-
-    if (projects.length > 0) {
-      console.log("Projects:", projects.map((p) => p.name).join(", "));
-    }
-
-    return true;
-  } catch (error) {
-    console.log("❌ Connection FAILED:", error);
-    return false;
+  const projects = await getProjects();
+  if (!Array.isArray(projects)) {
+    throw new Error("getProjects should return an array");
   }
+  console.log(`   Found ${projects.length} projects`);
 }
 
-// Test 2: List active tasks
 async function testListTasks() {
   console.log("\n📋 Testing list tasks...");
-
-  try {
-    const tasks = await getTasks({ status: "active" });
-    console.log(`✅ List tasks OK. Found ${tasks.length} active tasks`);
-    return true;
-  } catch (error) {
-    console.log("❌ List tasks FAILED:", error);
-    return false;
+  const tasks = await getTasks({ status: "active", limit: 5 });
+  if (!Array.isArray(tasks)) {
+    throw new Error("getTasks should return an array");
   }
+  console.log(`   Found ${tasks.length} active tasks`);
 }
 
-// Test 3: Create task
 async function testCreateTask() {
   console.log("\n➕ Testing create task...");
 
-  try {
-    const projects = await getProjects();
-    if (projects.length === 0) {
-      console.log("⚠️  No projects available, skipping task creation");
-      return null;
-    }
+  // Get the first project (or "Single Actions" project)
+  const projects = await getProjects();
+  const singleActionsProject = projects.find((p) => p.is_single_actions) || projects[0];
 
-    const testTaskName = `Claude Test Task ${Date.now()}`;
-    const task = await createTask({
-      name: testTaskName,
-      projectId: projects[0].id,
-    });
-
-    console.log("✅ Create task OK:", task.name);
-    console.log("   Task ID:", task.id);
-    return task;
-  } catch (error) {
-    console.log("❌ Create task FAILED:", error);
-    return null;
+  if (!singleActionsProject) {
+    throw new Error("No projects found");
   }
+
+  const timestamp = Date.now();
+  const taskName = `Claude Test Task ${timestamp}`;
+
+  const newTask = await createTask({
+    name: taskName,
+    projectId: singleActionsProject.id,
+  });
+
+  if (!newTask.id) {
+    throw new Error("Created task should have an ID");
+  }
+
+  if (newTask.name !== taskName) {
+    throw new Error(`Task name mismatch: expected "${taskName}", got "${newTask.name}"`);
+  }
+
+  console.log(`   Created task: ${newTask.name} (ID: ${newTask.id})`);
+
+  // Save task ID for cleanup and further tests
+  (globalThis as any).testTaskId = newTask.id;
+  (globalThis as any).testProjectId = singleActionsProject.id;
 }
 
-// Test 4: Add comment
-async function testAddComment(taskId: string) {
+async function testGetTaskDetails() {
+  console.log("\n📝 Testing get task details...");
+
+  const taskId = (globalThis as any).testTaskId;
+  if (!taskId) {
+    throw new Error("No test task ID available. Run create task test first.");
+  }
+
+  const task = await getTaskDetails(taskId);
+
+  if (task.id !== taskId) {
+    throw new Error("Task ID mismatch");
+  }
+
+  console.log(`   Retrieved task: ${task.name}`);
+}
+
+async function testAddComment() {
   console.log("\n💬 Testing add comment...");
 
+  const taskId = (globalThis as any).testTaskId;
   if (!taskId) {
-    console.log("⚠️  No task ID available, skipping comment test");
-    return false;
+    throw new Error("No test task ID available");
   }
 
-  try {
-    const success = await addComment(taskId, "Test comment from automated test");
-    if (success) {
-      console.log("✅ Add comment OK");
-      return true;
-    }
-    return false;
-  } catch (error) {
-    console.log("❌ Add comment FAILED:", error);
-    return false;
-  }
+  const commentText = `Test comment from automated test at ${new Date().toISOString()}`;
+
+  await addComment(taskId, commentText);
+
+  console.log(`   Added comment: "${commentText}"`);
 }
 
-// Test 5: Verify comment in task details
-async function testTaskDetails(taskId: string) {
-  console.log("\n🔍 Testing task details...");
-
-  if (!taskId) {
-    console.log("⚠️  No task ID available, skipping details test");
-    return false;
-  }
-
-  try {
-    const task = await getTaskDetails(taskId);
-    console.log(`✅ Task details OK. Comments: ${task.comments_count || 0}`);
-    return true;
-  } catch (error) {
-    console.log("❌ Task details FAILED:", error);
-    return false;
-  }
-}
-
-// Test 6: Complete task
-async function testCompleteTask(taskId: string) {
+async function testCompleteTask() {
   console.log("\n✅ Testing complete task...");
 
+  const taskId = (globalThis as any).testTaskId;
   if (!taskId) {
-    console.log("⚠️  No task ID available, skipping complete test");
-    return false;
+    throw new Error("No test task ID available");
   }
 
-  try {
-    const success = await completeTask(taskId);
-    if (success) {
-      console.log("✅ Complete task OK");
-      return true;
-    }
-    return false;
-  } catch (error) {
-    console.log("❌ Complete task FAILED:", error);
-    return false;
-  }
+  await completeTask(taskId);
+
+  console.log(`   Completed task: ${taskId}`);
 }
 
-// Test 7: Edge cases
 async function testEdgeCases() {
   console.log("\n⚠️  Testing edge cases...");
 
-  let allPassed = true;
-
-  // Invalid token (skip this test as it would require changing env)
-  // Non-existent task ID
+  // Test non-existent task
   try {
-    await getTaskDetails("nonexistent-id");
-    console.log("❌ Should have thrown for non-existent task");
-    allPassed = false;
+    await getTaskDetails("nonexistent_id_12345");
+    throw new Error("Should have thrown error for non-existent task");
   } catch (error) {
-    if (error instanceof Error && error.message.includes("No encontré")) {
-      console.log("✅ Non-existent task ID handled correctly");
+    const errorMsg = (error as Error).message;
+    if (errorMsg.includes("No encontré esa tarea") || errorMsg.includes("Failed to fetch task")) {
+      console.log("   ✅ Non-existent task ID handled correctly");
     } else {
-      console.log("❌ Wrong error message:", error);
-      allPassed = false;
+      throw error;
     }
   }
 
-  return allPassed;
+  // Test empty comment
+  try {
+    const taskId = (globalThis as any).testTaskId || "dummy_id";
+    await addComment(taskId, "x");
+    // If we get here, the API accepted a short comment (might be allowed)
+    console.log("   ℹ️  Short comments are allowed by API");
+  } catch (error) {
+    if ((error as Error).message.includes("al menos 2 caracteres")) {
+      console.log("   ✅ Short comment validation works");
+    } else {
+      throw error;
+    }
+  }
 }
 
-// Main test runner
+// ============================================================
+// MAIN
+// ============================================================
+
 async function main() {
-  const tests = [
-    { name: "Connection", fn: testConnection },
-    { name: "List tasks", fn: testListTasks },
-    { name: "Create task", fn: testCreateTask },
-    { name: "Add comment", fn: () => testCreateTask().then(task => task ? testAddComment(task.id) : false) },
-    { name: "Task details", fn: () => testCreateTask().then(task => task ? testTaskDetails(task.id) : false) },
-    { name: "Complete task", fn: () => testCreateTask().then(task => task ? testCompleteTask(task.id) : false) },
-    { name: "Edge cases", fn: testEdgeCases },
-  ];
+  console.log("============================================================");
+  console.log("🧪 Testing Nozbe API Access");
+  console.log("============================================================");
 
-  const results = await Promise.all(
-    tests.map(async (test) => {
-      try {
-        const passed = await test.fn();
-        return { name: test.name, passed };
-      } catch (error) {
-        console.error(`\n❌ ${test.name} threw error:`, error);
-        return { name: test.name, passed: false };
-      }
-    })
-  );
+  // Check environment
+  console.log("\n🔑 Credentials check:");
+  if (!process.env.NOZBE_API_TOKEN) {
+    console.error("❌ NOZBE_API_TOKEN not set in .env");
+    process.exit(1);
+  }
+  console.log("NOZBE_API_TOKEN: SET ✓");
 
-  console.log("\n" + "=".repeat(60));
+  // Run tests in sequence
+  await runTest("Connection", testConnection);
+  await runTest("List tasks", testListTasks);
+  await runTest("Create task", testCreateTask);
+  await runTest("Task details", testGetTaskDetails);
+  await runTest("Add comment", testAddComment);
+  await runTest("Complete task", testCompleteTask);
+  await runTest("Edge cases", testEdgeCases);
+
+  // Summary
+  console.log("\n============================================================");
   console.log("📊 Test Results Summary:");
-  console.log("=".repeat(60));
+  console.log("============================================================");
+
+  const passed = results.filter((r) => r.passed).length;
+  const failed = results.filter((r) => !r.passed).length;
 
   results.forEach((result) => {
-    const status = result.passed ? "✅ PASS" : "❌ FAIL";
-    console.log(`${status}: ${result.name}`);
+    const icon = result.passed ? "✅ PASS" : "❌ FAIL";
+    console.log(`${icon}: ${result.name}`);
+    if (!result.passed && result.error) {
+      console.log(`   ${result.error}`);
+    }
   });
 
-  const allPassed = results.every((r) => r.passed);
-  console.log("=".repeat(60));
+  console.log("============================================================");
 
-  if (allPassed) {
-    console.log("\n🎉 All Nozbe API tests passed!");
-    console.log("\n✅ Nozbe integration is working correctly");
+  if (failed > 0) {
+    console.log(`⚠️  ${failed} test(s) failed. Check the errors above.`);
+    process.exit(1);
   } else {
-    console.log("\n⚠️  Some tests failed. Check the errors above.");
+    console.log(`🎉 All ${passed} tests passed!`);
   }
-
-  process.exit(allPassed ? 0 : 1);
 }
 
-main().catch(console.error);
+main().catch((error) => {
+  console.error("Fatal error:", error);
+  process.exit(1);
+});

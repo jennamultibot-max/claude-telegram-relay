@@ -5,6 +5,9 @@
  * API Documentation: https://nozbe.help/advancedfeatures/api/
  */
 
+// Use require for node-fetch (CommonJS) to avoid Bun module caching issues
+const fetch = require("node-fetch");
+
 // ============================================================
 // TYPE DEFINITIONS
 // ============================================================
@@ -43,7 +46,7 @@ export interface NozbeApiResponse<T> {
 // CONFIGURATION
 // ============================================================
 
-const NOZBE_API_BASE = "https://api4.nozbe.com/v1/api";
+const NOZBE_API_BASE = "https://api4.nozbe.com/v1";
 const NOZBE_API_TOKEN = process.env.NOZBE_API_TOKEN;
 const USER_TIMEZONE = process.env.USER_TIMEZONE || "Europe/Madrid";
 
@@ -106,8 +109,10 @@ export async function fetchNozbe(
 
       const response = await fetch(url, {
         ...fetchOptions,
+        redirect: "follow", // Follow HTTP redirects (307, 301, etc.)
         headers: {
           "Authorization": `apikey ${NOZBE_API_TOKEN}`,
+          "Accept": "application/json",
           "Content-Type": "application/json",
           ...fetchOptions.headers,
         },
@@ -163,8 +168,8 @@ export async function getProjects(): Promise<NozbeProject[]> {
 
     const data = await response.json();
 
-    // Nozbe API returns { projects: [...] }
-    return (data.projects as NozbeProject[]) || [];
+    // Nozbe API returns an array directly
+    return (data as NozbeProject[]) || [];
   } catch (error) {
     console.error("Error fetching projects:", error);
     throw error;
@@ -229,8 +234,8 @@ export async function getTasks(options?: GetTasksOptions): Promise<NozbeTask[]> 
 
     const data = await response.json();
 
-    // Nozbe API returns { tasks: [...] }
-    return (data.tasks as NozbeTask[]) || [];
+    // Nozbe API returns an array directly
+    return (data as NozbeTask[]) || [];
   } catch (error) {
     console.error("Error fetching tasks:", error);
     throw error;
@@ -317,7 +322,7 @@ export async function createTask(data: CreateTaskData): Promise<NozbeTask> {
 }
 
 /**
- * Mark a task as completed by setting ended_at
+ * Mark a task as completed
  * @param taskId Task ID
  * @returns Promise<boolean> True if successful
  */
@@ -326,7 +331,7 @@ export async function completeTask(taskId: string): Promise<boolean> {
     const response = await fetchNozbe(`/api/tasks/${taskId}`, {
       method: "PUT",
       body: JSON.stringify({
-        ended_at: new Date().toISOString(),
+        ended_at: Date.now(),
       }),
     });
 
@@ -335,6 +340,10 @@ export async function completeTask(taskId: string): Promise<boolean> {
     }
 
     if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      if (Array.isArray(errorData) && errorData[0]?.exception) {
+        throw new Error(`Failed to complete task: ${errorData[0].message}`);
+      }
       throw new Error(`Failed to complete task: ${response.statusText}`);
     }
 
@@ -357,9 +366,10 @@ export async function addComment(taskId: string, text: string): Promise<boolean>
       throw new Error("El comentario debe tener al menos 2 caracteres");
     }
 
-    const response = await fetchNozbe(`/api/tasks/${taskId}/comment`, {
+    const response = await fetchNozbe(`/api/comments`, {
       method: "POST",
       body: JSON.stringify({
+        task_id: taskId,
         body: text,
       }),
     });
