@@ -15,6 +15,11 @@ import { createClient, SupabaseClient } from "@supabase/supabase-js";
 import { transcribe } from "./transcribe.ts";
 import { PDFDocument } from "pdf-lib";
 import * as pdfjsLib from "pdfjs-dist";
+import { GwsCommands } from "./gws-helper.ts";
+
+// Load environment variables from .env file
+import { config } from "dotenv";
+config();
 import {
   processMemoryIntents,
   getMemoryContext,
@@ -30,7 +35,7 @@ import {
   getTerminalStatusBar,
 } from "./status-terminal.ts";
 import { getStatusBar } from "./status-bar.ts";
-import { executeGws, GwsCommands } from "./gws-helper.ts";
+import { executeGws, GwsCommands, listInboxWithContent } from "./gws-helper.ts";
 
 const PROJECT_ROOT = dirname(dirname(import.meta.path));
 
@@ -221,21 +226,15 @@ async function fetchGwsIfNeeded(query: string): Promise<string | undefined> {
     return undefined;
   }
 
-  console.log("Email-related query detected, fetching Gmail data...");
+  console.log("Email-related query detected, fetching Gmail data with full content...");
 
   try {
-    const result = await executeGws({
-      service: "gmail",
-      resource: "users",
-      method: "messages",
-      submethod: "list",
-      params: '{"userId": "me", "pageSize": 10}',
-      format: "json",
-    });
+    // Use listInboxWithContent to get full email details (subject, from, date, body preview)
+    const result = await listInboxWithContent(10);
 
     if (result.success) {
-      console.log("Gmail data fetched successfully");
-      return `\n\n**GMAIL DATA (pre-fetched):**\n${result.output}\n\nUse this data to answer the user's question about emails. Do NOT try to execute gws commands - the data is already provided above.`;
+      console.log("Gmail data with content fetched successfully");
+      return `\n\n**GMAIL DATA (pre-fetched with full content):**\n${result.output}\n\nUse this data to answer the user's question about emails. Each email includes: subject, from, date, and body preview. Do NOT try to execute gws commands - the data is already provided above.`;
     } else {
       console.log("Gmail fetch failed:", result.error);
       return undefined;
@@ -355,48 +354,18 @@ bot.command("gmail", async (ctx) => {
 
   await ctx.replyWithChatAction("typing");
 
-  // Default: list last 5 emails
-  const command: any = {
-    service: "gmail",
-    resource: "users",
-    method: "messages",
-    format: "json",
-  };
-
-  // Parse optional flags
+  // Parse optional count
   const parts = args.trim().split(/\s+/);
-  if (parts.length > 0 && parts[0] === "list") {
-    command.params = '{"pageSize": 10}';
-  } else if (parts.length > 0 && parts[0] === "last") {
-    const count = parseInt(parts[1]) || 1;
-    command.params = `{"pageSize": ${count}}`;
-  } else {
-    command.params = '{"pageSize": 5}';
-  }
+  const count = parts.length > 0 ? parseInt(parts[0]) || 5 : 5;
 
   try {
-    const result = await executeGws(command);
+    const result = await GwsCommands.listInbox(`{"userId": "me", "maxResults": ${count}}`);
     if (!result.success) {
       await ctx.reply(`❌ Error: ${result.error}`);
       return;
     }
 
-    // Format the output nicely
-    try {
-      const data = JSON.parse(result.output);
-      if (data.messages && data.messages.length > 0) {
-        let response = `📧 **Últimos ${data.messages.length} emails:**\n\n`;
-        for (const msg of data.messages) {
-          response += `📬 ID: \`${msg.id}\`\n`;
-        }
-        await ctx.reply(response, { parse_mode: "Markdown" });
-        await ctx.reply("💡 Tip: Usa `/gmail read <id>` para ver el contenido de un email específico");
-      } else {
-        await ctx.reply("📭 No hay emails en la bandeja de entrada.");
-      }
-    } catch {
-      await ctx.reply(result.output);
-    }
+    await ctx.reply(result.output, { parse_mode: "Markdown" });
   } catch (error) {
     await ctx.reply(`❌ Error: ${error instanceof Error ? error.message : "Unknown error"}`);
   }
@@ -405,29 +374,65 @@ bot.command("gmail", async (ctx) => {
 bot.command("email", async (ctx) => {
   await ctx.replyWithChatAction("typing");
 
-  const command = {
-    service: "gmail",
-    resource: "users",
-    method: "messages",
-    params: '{"pageSize": 1}',
-    format: "json" as const,
-  };
-
   try {
-    const result = await executeGws(command);
+    const result = await GwsCommands.listInbox('{"userId": "me", "maxResults": 1}');
     if (!result.success) {
       await ctx.reply(`❌ Error: ${result.error}`);
       return;
     }
 
-    const data = JSON.parse(result.output);
-    if (data.messages && data.messages.length > 0) {
-      const msg = data.messages[0];
-      await ctx.reply(`📧 **Último email:**\n\n📬 ID: \`${msg.id}\`\n🧵 Thread: \`${msg.threadId}\``, { parse_mode: "Markdown" });
-      await ctx.reply("💡 Tip: Usa `/gmail read ${msg.id}` para ver el contenido completo");
-    } else {
-      await ctx.reply("📭 No hay emails en la bandeja de entrada.");
+    await ctx.reply(result.output, { parse_mode: "Markdown" });
+  } catch (error) {
+    await ctx.reply(`❌ Error: ${error instanceof Error ? error.message : "Unknown error"}`);
+  }
+});
+
+// New command: Full email content with details
+bot.command("emails_full", async (ctx) => {
+  const args = ctx.message.text.split(" ").slice(1).join(" ");
+  console.log(`Emails full command: ${args}`);
+
+  await ctx.replyWithChatAction("typing");
+
+  // Parse optional count
+  const parts = args.trim().split(/\s+/);
+  const count = parts.length > 0 ? parseInt(parts[0]) || 5 : 5;
+
+  try {
+    const result = await listInboxWithContent(count);
+    if (!result.success) {
+      await ctx.reply(`❌ Error: ${result.error}`);
+      return;
     }
+
+    await ctx.reply(result.output, { parse_mode: "Markdown" });
+  } catch (error) {
+    await ctx.reply(`❌ Error: ${error instanceof Error ? error.message : "Unknown error"}`);
+  }
+});
+
+// New command: Summary of important emails
+bot.command("resumen_emails", async (ctx) => {
+  const args = ctx.message.text.split(" ").slice(1).join(" ");
+  console.log(`Resumen emails command: ${args}`);
+
+  await ctx.replyWithChatAction("typing");
+
+  // Parse optional count
+  const parts = args.trim().split(/\s+/);
+  const count = parts.length > 0 ? parseInt(parts[0]) || 10 : 10;
+
+  try {
+    // Get emails with full content
+    const result = await listInboxWithContent(count);
+    if (!result.success) {
+      await ctx.reply(`❌ Error: ${result.error}`);
+      return;
+    }
+
+    // Add a header for the summary
+    const summary = `📊 **Resumen de emails importantes:**\n\n${result.output}`;
+    await ctx.reply(summary, { parse_mode: "Markdown" });
   } catch (error) {
     await ctx.reply(`❌ Error: ${error instanceof Error ? error.message : "Unknown error"}`);
   }
