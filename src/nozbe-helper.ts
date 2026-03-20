@@ -344,3 +344,41 @@ export async function completeTask(taskId: string): Promise<boolean> {
     throw error;
   }
 }
+
+/**
+ * Add a comment to a task
+ * @param taskId Task ID
+ * @param text Comment text
+ * @returns Promise<boolean> True if successful
+ */
+export async function addComment(taskId: string, text: string): Promise<boolean> {
+  try {
+    if (text.length < 2) {
+      throw new Error("El comentario debe tener al menos 2 caracteres");
+    }
+
+    const response = await fetchNozbe(`/api/tasks/${taskId}/comment`, {
+      method: "POST",
+      body: JSON.stringify({
+        body: text,
+      }),
+    });
+
+    if (response.status === 404) {
+      throw new Error("No encontré esa tarea. Verifica el ID");
+    }
+
+    if (response.status === 400) {
+      throw new Error("El comentario no puede estar vacío");
+    }
+
+    if (!response.ok) {
+      throw new Error(`Failed to add comment: ${response.statusText}`);
+    }
+
+    return true;
+  } catch (error) {
+    console.error("Error adding comment:", error);
+    throw error;
+  }
+}
