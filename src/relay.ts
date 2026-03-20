@@ -36,6 +36,7 @@ import {
 } from "./status-terminal.ts";
 import { getStatusBar } from "./status-bar.ts";
 import { executeGws, GwsCommands, listInboxWithContent } from "./gws-helper.ts";
+import { NozbeCommands, getTasks } from "./nozbe-helper.ts";
 
 const PROJECT_ROOT = dirname(dirname(import.meta.path));
 
