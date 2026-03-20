@@ -74,3 +74,73 @@ function getUserNow(): Date {
   const now = new Date();
   return new Date(now.toLocaleString("en-US", { timeZone: USER_TIMEZONE }));
 }
+
+// ============================================================
+// FETCH WITH RETRY LOGIC
+// ============================================================
+
+interface FetchNozbeOptions extends RequestInit {
+  retries?: number;
+}
+
+export async function fetchNozbe(
+  endpoint: string,
+  options: FetchNozbeOptions = {}
+): Promise<Response> {
+  const { retries = 3, ...fetchOptions } = options;
+
+  if (!NOZBE_API_TOKEN) {
+    throw new Error("NOZBE_API_TOKEN is not configured");
+  }
+
+  const url = `${NOZBE_API_BASE}${endpoint}`;
+
+  let lastError: Error | undefined;
+
+  for (let attempt = 0; attempt < retries; attempt++) {
+    try {
+      // Log retry attempt (if not first attempt)
+      if (attempt > 0) {
+        console.log(`Retry attempt ${attempt + 1}/${retries}...`);
+      }
+
+      const response = await fetch(url, {
+        ...fetchOptions,
+        headers: {
+          "Authorization": `apikey ${NOZBE_API_TOKEN}`,
+          "Content-Type": "application/json",
+          ...fetchOptions.headers,
+        },
+      });
+
+      // Handle rate limiting with exponential backoff
+      if (response.status === 429) {
+        const waitTime = Math.pow(2, attempt) * 1000; // 1s, 2s, 4s
+        console.log(`Rate limited, waiting ${waitTime}ms before retry ${attempt + 2}/${retries}...`);
+        await new Promise(resolve => setTimeout(resolve, waitTime));
+        continue;
+      }
+
+      // Handle authentication errors
+      if (response.status === 401) {
+        throw new Error(
+          "Token de Nozbe inválido o expirado. Genera uno nuevo en nozbe.help/api"
+        );
+      }
+
+      // Successful response
+      return response;
+    } catch (error) {
+      // Store error for final throw if all retries fail
+      lastError = error instanceof Error ? error : new Error(String(error));
+
+      // If this is the last attempt, we'll throw after the loop
+      if (attempt < retries - 1) {
+        console.error(`Fetch attempt ${attempt + 1} failed:`, lastError.message);
+      }
+    }
+  }
+
+  // All retries exhausted
+  throw lastError || new Error("Max retries exceeded");
+}
