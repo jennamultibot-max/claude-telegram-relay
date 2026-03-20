@@ -84,9 +84,11 @@ async function getActiveGoals(): Promise<Goal[]> {
 
 **Data Flow:**
 - Reads from `memory` table where `type = 'goal'`
-- Filters out completed goals (`completed_at IS NULL`)
+- Filters out completed goals (verified via `get_active_goals()` RPC function)
 - Returns with priority and deadline information
 - Leverages existing Supabase client from memory.ts
+
+**Important Note:** The `get_active_goals()` SQL function in `db/schema.sql` (lines 98-112) currently filters only by `type = 'goal'`. We'll need to verify if this function should be updated to include `AND m.completed_at IS NULL` filtering, or if the application layer should handle this filtering instead.
 
 ### 2.2 Semantic Context Gathering
 
@@ -163,6 +165,12 @@ REASON: [Por qué decidiste esto]
 
 ### 2.4 Enhanced Telegram Notifications
 
+**Notification Types:**
+1. **Urgent**: Deadline within 24 hours
+2. **Reminder**: Task pending for multiple days
+3. **Progress**: General status update
+4. **Assistance**: Offering help with multiple active tasks
+
 **Message Templates:**
 ```
 🚨 URGENTE: "Revisar informe" vence en 4 horas
@@ -170,11 +178,48 @@ REASON: [Por qué decidiste esto]
 ✓ Progreso: Tienes 3 tareas activas, ¿quieres ayuda con alguna?
 ```
 
-**Notification Types:**
-1. **Urgent**: Deadline within 24 hours
-2. **Reminder**: Task pending for multiple days
-3. **Progress**: General status update
-4. **Assistance**: Offering help with multiple active tasks
+**Template Selection Logic:**
+```typescript
+interface NotificationConfig {
+  type: 'urgent' | 'reminder' | 'progress' | 'assistance';
+  emoji: string;
+  template: (data: NotificationData) => string;
+}
+
+const notificationTemplates: NotificationConfig[] = [
+  {
+    type: 'urgent',
+    emoji: '🚨',
+    template: (data) => `URGENTE: "${data.task}" vence en ${data.hoursRemaining} horas`
+  },
+  {
+    type: 'reminder',
+    emoji: '⏰',
+    template: (data) => `Recordatorio: "${data.task}" pendiente desde hace ${data.daysAgo} días`
+  },
+  {
+    type: 'progress',
+    emoji: '✓',
+    template: (data) => `Progreso: Tienes ${data.taskCount} tareas activas, ¿quieres ayuda con alguna?`
+  },
+  {
+    type: 'assistance',
+    emoji: '💡',
+    template: (data) => `¿Te ayudo con alguna de tus ${data.taskCount} tareas pendientes?`
+  }
+];
+
+function selectNotificationTemplate(urgency: number, daysSinceLast: number): NotificationConfig {
+  if (urgency >= 3 || hoursRemaining <= 24) {
+    return notificationTemplates.find(t => t.type === 'urgent')!;
+  } else if (daysSinceLast > 3) {
+    return notificationTemplates.find(t => t.type === 'reminder')!;
+  } else if (urgency >= 2) {
+    return notificationTemplates.find(t => t.type === 'progress')!;
+  }
+  return notificationTemplates.find(t => t.type === 'assistance')!;
+}
+```
 
 ---
 
@@ -246,9 +291,22 @@ Claude analiza contexto + reglas de aviso
 
 **Supabase Connection:**
 - Automatic retries (3 attempts with exponential backoff)
-- Fallback to local data if all attempts fail
+- **Fallback Data:** Use existing hardcoded goals from `smart-checkin.ts` as temporary fallback
+- **Fallback Behavior:** Continue with limited functionality but log all failures
 - Detailed logging to `logs` table
 - Timeout: 10 seconds maximum
+
+```typescript
+async function safeGoalRetrieval(): Promise<Goal[]> {
+  try {
+    return await getActiveGoals();
+  } catch (error) {
+    await logError('supabase_connection_failed', error);
+    // Fallback to existing mock data as last resort
+    return mockFallbackGoals();
+  }
+}
+```
 
 ```typescript
 async function safeSupabaseCall<T>(
@@ -502,8 +560,9 @@ const context = {
 
 ### 8.1 Performance Optimization
 
-**Embedding Caching:**
+**Embedding Caching Strategy:**
 ```typescript
+// In-memory cache for current daemon execution
 const embeddingCache = new Map<string, number[]>();
 
 async function getCachedEmbedding(text: string): Promise<number[]> {
@@ -516,14 +575,66 @@ async function getCachedEmbedding(text: string): Promise<number[]> {
 }
 ```
 
-**Benefit**: Reduces Edge Function calls by 60-70%
+**Alternative: Database-Backed Cache (Recommended)**
+```typescript
+// Persist cache across daemon executions using database
+async function getPersistentCache(taskIds: string[]): Promise<Map<string, number[]>> {
+  const result = await supabase
+    .from('embedding_cache')
+    .select('task_id, embedding')
+    .in('task_id', `(${taskIds.map(() => '?').join(',')})`)
+    .throwOnError();
+
+  return new Map(
+    result.data.map(row => [row.task_id, row.embedding])
+  );
+}
+```
+
+**Benefit**: Reduces Edge Function calls by 60-70% (in-memory) OR 80-90% (database-backed)
+
+**Considerations:**
+- In-memory cache is lost when daemon exits (every 30 min)
+- Database-backed cache persists across executions but adds query overhead
+- **Recommendation:** Start with in-memory cache, add database persistence if embedding costs become significant
 
 **Connection Pooling:**
 - Reuse existing HTTP connections
 - Timeout: 10 seconds maximum
 - Connection pool: maximum 5 simultaneous connections
 
-**Intelligent Rate Limiting:**
+**Daily Notification Limit Enforcement:**
+```typescript
+// Track daily notifications across daemon executions
+async function enforceDailyLimit(): Promise<boolean> {
+  const today = new Date().toISOString().split('T')[0];
+
+  const result = await supabase
+    .from('notifications')
+    .select('count')
+    .eq('date', today)
+    .single();
+
+  return result.data.count < 2; // Max 2 per day
+}
+
+// Record each notification
+async function recordNotification(
+  type: string,
+  goalId: string
+): Promise<void> {
+  const today = new Date().toISOString().split('T')[0];
+
+  await supabase.from('notifications').insert({
+    date: today,
+    type,
+    goal_id: goalId,
+    timestamp: new Date().toISOString()
+  });
+}
+```
+
+**Per-Execution Rate Limiting:**
 ```typescript
 const recentNotifications = [];
 
@@ -533,7 +644,7 @@ function shouldNotify(): boolean {
     t => now - t < 3600000 // 1 hour
   );
 
-  return lastHour.length < 2; // Max 2 per hour
+  return lastHour.length < 1; // Max 1 per hour, checked against daily limit
 }
 ```
 
@@ -745,14 +856,13 @@ function normalizeGoal(goal: LegacyGoal | EnhancedGoal): EnhancedGoal {
 
 ---
 
-**Design Version:** 1.1 (Updated based on reviewer feedback)
+**Design Version:** 1.2 (Further improvements based on reviewer feedback)
 **Status:** Awaiting User Approval
 **Author:** Claude Code (with brainstorming skill)
-**Changes from v1.0:**
-- Leveraged existing `src/memory.ts` patterns instead of creating duplicate modules
-- Added task creation and pattern recognition section
-- Added edge cases and failure modes specification
-- Added metrics and observability section
-- Added state synchronization with main relay
-- Updated implementation phases to include verification phase
-- Added migration considerations for backwards compatibility
+**Changes from v1.1:**
+- Clarified `get_active_goals()` behavior and noted need to verify SQL function
+- Added notification tracking mechanism for daily limit enforcement
+- Clarified fallback mechanism for Supabase connection failures
+- Enhanced template selection logic for notification types
+- Added database-backed caching option for embedding persistence
+- Fixed inconsistency between specification and existing SQL function
