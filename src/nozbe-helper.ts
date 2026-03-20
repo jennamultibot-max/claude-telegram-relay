@@ -170,3 +170,69 @@ export async function getProjects(): Promise<NozbeProject[]> {
     throw error;
   }
 }
+
+// ============================================================
+// TASKS API
+// ============================================================
+
+/**
+ * Options for filtering tasks from Nozbe API
+ */
+export interface GetTasksOptions {
+  /** Filter by project ID */
+  projectId?: string;
+  /** Filter by status: "active" or "completed" */
+  status?: "active" | "completed";
+  /** Filter tasks due before this date (ISO format: YYYY-MM-DD) */
+  dueBefore?: string;
+  /** Maximum number of tasks to return */
+  limit?: number;
+}
+
+/**
+ * Get tasks from Nozbe with optional filtering
+ * @param options Filter options for tasks query
+ * @returns Promise<NozbeTask[]> Array of tasks matching filters
+ */
+export async function getTasks(options?: GetTasksOptions): Promise<NozbeTask[]> {
+  try {
+    // Build query string using URLSearchParams
+    const params = new URLSearchParams();
+
+    if (options?.projectId) {
+      params.append("project_id", options.projectId);
+    }
+
+    if (options?.status) {
+      params.append("status", options.status);
+    }
+
+    // LHS bracket notation for Nozbe API filtering
+    // Example: "due_date<2026-03-21" filters tasks due before March 21, 2026
+    if (options?.dueBefore) {
+      params.append("due_date<", options.dueBefore);
+    }
+
+    if (options?.limit) {
+      params.append("limit", String(options.limit));
+    }
+
+    // Build endpoint with query string
+    const queryString = params.toString();
+    const endpoint = queryString ? `/api/tasks?${queryString}` : "/api/tasks";
+
+    const response = await fetchNozbe(endpoint);
+
+    if (!response.ok) {
+      throw new Error(`Failed to fetch tasks: ${response.statusText}`);
+    }
+
+    const data = await response.json();
+
+    // Nozbe API returns { tasks: [...] }
+    return (data.tasks as NozbeTask[]) || [];
+  } catch (error) {
+    console.error("Error fetching tasks:", error);
+    throw error;
+  }
+}
