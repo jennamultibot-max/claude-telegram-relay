@@ -236,3 +236,27 @@ export async function getTasks(options?: GetTasksOptions): Promise<NozbeTask[]> 
     throw error;
   }
 }
+
+/**
+ * Get details for a single task
+ * @param taskId Task ID
+ * @returns Promise<NozbeTask> Task details
+ */
+export async function getTaskDetails(taskId: string): Promise<NozbeTask> {
+  try {
+    const response = await fetchNozbe(`/api/tasks/${taskId}`);
+
+    if (response.status === 404) {
+      throw new Error("No encontré esa tarea. Verifica el ID");
+    }
+
+    if (!response.ok) {
+      throw new Error(`Failed to fetch task: ${response.statusText}`);
+    }
+
+    return (await response.json()) as NozbeTask;
+  } catch (error) {
+    console.error("Error fetching task details:", error);
+    throw error;
+  }
+}
