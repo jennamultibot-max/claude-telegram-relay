@@ -666,6 +666,12 @@ bot.on("message:text", async (ctx) => {
     await ctx.replyWithChatAction("typing");
   }
 
+  // Pre-fetch Nozbe data if user is asking about tasks
+  const nozbeData = await fetchNozbeIfNeeded(text);
+  if (nozbeData) {
+    await ctx.replyWithChatAction("typing");
+  }
+
   // Gather context: recent conversation + semantic search + facts/goals
   const [recentMessages, relevantContext, memoryContext] = await Promise.all([
     getRecentMessages(supabase, 10),
@@ -673,7 +679,7 @@ bot.on("message:text", async (ctx) => {
     getMemoryContext(supabase),
   ]);
 
-  const enrichedPrompt = buildPrompt(text, recentMessages, relevantContext, memoryContext, webSearchResults, gwsData);
+  const enrichedPrompt = buildPrompt(text, recentMessages, relevantContext, memoryContext, webSearchResults, gwsData, nozbeData);
   const rawResponse = await callClaude(enrichedPrompt, { resume: true });
 
   // Parse and save any memory intents, strip tags from response
@@ -731,6 +737,12 @@ bot.on("message:voice", async (ctx) => {
       await ctx.replyWithChatAction("typing");
     }
 
+    // Pre-fetch Nozbe data if voice message is about tasks
+    const nozbeData = await fetchNozbeIfNeeded(transcription);
+    if (nozbeData) {
+      await ctx.replyWithChatAction("typing");
+    }
+
     const [recentMessages, relevantContext, memoryContext] = await Promise.all([
       getRecentMessages(supabase, 10),
       getRelevantContext(supabase, transcription),
@@ -743,7 +755,8 @@ bot.on("message:voice", async (ctx) => {
       relevantContext,
       memoryContext,
       webSearchResults,
-      gwsData
+      gwsData,
+      nozbeData
     );
     const rawResponse = await callClaude(enrichedPrompt, { resume: true });
     const claudeResponse = await processMemoryIntents(supabase, rawResponse);
@@ -957,7 +970,8 @@ function buildPrompt(
   relevantContext?: string,
   memoryContext?: string,
   webSearchResults?: string,
-  gwsData?: string
+  gwsData?: string,
+  nozbeData?: string
 ): string {
   const now = new Date();
   const timeStr = now.toLocaleString("en-US", {
@@ -990,6 +1004,9 @@ function buildPrompt(
   }
   if (gwsData) {
     parts.push(`\n${gwsData}`);
+  }
+  if (nozbeData) {
+    parts.push(`\n${nozbeData}`);
   }
   if (memoryContext) parts.push(`\n${memoryContext}`);
   if (relevantContext) parts.push(`\n${relevantContext}`);
