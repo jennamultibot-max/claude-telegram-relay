@@ -227,7 +227,8 @@ async function fetchGwsIfNeeded(query: string): Promise<string | undefined> {
     const result = await executeGws({
       service: "gmail",
       resource: "users",
-      method: "messages.list",
+      method: "messages",
+      submethod: "list",
       params: '{"userId": "me", "pageSize": 10}',
       format: "json",
     });

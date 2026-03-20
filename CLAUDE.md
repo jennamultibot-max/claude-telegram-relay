@@ -81,19 +81,19 @@ Use the Supabase MCP to run the schema:
 This gives your bot real memory — it finds relevant past conversations automatically.
 
 **You need from the user:**
-- An OpenAI API key (for generating text embeddings)
+- A Gemini API key (for generating text embeddings)
 
 **What to tell them:**
-1. Go to platform.openai.com, create an account
-2. Go to API keys, create a new key, copy it
+1. Go to aistudio.google.com/app/apikey, create an account
+2. Create a new API key, copy it
 3. The key will be stored in Supabase, not on your computer. It stays with your database.
 
 **What you do:**
 1. Deploy the embed Edge Function via Supabase MCP (`deploy_edge_function` with `supabase/functions/embed/index.ts`)
 2. Deploy the search Edge Function (`supabase/functions/search/index.ts`)
-3. Tell the user to store their OpenAI key in Supabase:
+3. Tell the user to store their Gemini key in Supabase:
    - Go to Supabase dashboard > Project Settings > Edge Functions
-   - Under Secrets, add: `OPENAI_API_KEY` = their key
+   - Under Secrets, add: `GEMINI_API_KEY` = their key
 4. Set up database webhooks so embeddings are generated automatically:
    - Go to Supabase dashboard > Database > Webhooks > Create webhook
    - Name: `embed_messages`, Table: `messages`, Events: INSERT
@@ -136,15 +136,19 @@ Run `bun run test:supabase` to confirm:
 1. Run `bun run start`
 2. Tell the user to open Telegram and send a test message to their bot
 3. Wait for confirmation it responded
-4. Press Ctrl+C to stop
+4. **Test web search**: Send a query like "¿qué películas hay en cines hoy?" or "clima en Madrid"
+5. Press Ctrl+C to stop
 
 **Troubleshooting if it fails:**
 - Wrong bot token → re-check with BotFather
 - Wrong user ID → re-check with @userinfobot
 - Claude CLI not found → `npm install -g @anthropic-ai/claude-code`
 - Bun not installed → `curl -fsSL https://bun.sh/install | bash`
+- Web search not working → Run `bun run test:websearch` to verify
 
-**Done when:** User confirms their bot responded on Telegram.
+**Done when:** User confirms their bot responded on Telegram and can perform web searches.
+
+**Note:** The bot automatically detects when a query needs web search (keywords like "hoy", "precio", "cine", "clima", etc.) and includes search results in Claude's context.
 
 ---
 

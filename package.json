@@ -19,7 +19,12 @@
     "status:json": "bun run scripts/status.ts --json",
     "example:status": "bun run examples/status-example.ts",
     "example:terminal-status": "bun run examples/terminal-status-demo.ts",
-    "test:status": "bun run examples/quick-status-test.ts"
+    "test:status": "bun run examples/quick-status-test.ts",
+    "watch:status": "./watch-status.sh",
+    "monitor:context": "./monitor-context.sh",
+    "setup:tmux-statusbar": "./setup-tmux-statusbar.sh",
+    "setup:prompt-context": "./setup-prompt-context.sh",
+    "setup:simple-prompt": "./setup-simple-prompt.sh"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.0",

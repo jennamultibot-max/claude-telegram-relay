@@ -26,23 +26,23 @@ Deno.serve(async (req) => {
       return new Response("Missing query", { status: 400 });
     }
 
-    const openaiKey = Deno.env.get("OPENAI_API_KEY");
-    if (!openaiKey) {
-      return new Response("OPENAI_API_KEY not configured", { status: 500 });
+    const geminiKey = Deno.env.get("GEMINI_API_KEY") || Deno.env.get("gemini_api_key");
+    if (!geminiKey) {
+      return new Response("GEMINI_API_KEY not configured", { status: 500 });
     }
 
-    // Generate embedding for the search query
+    // Generate embedding for the search query via Gemini
     const embeddingResponse = await fetch(
-      "https://api.openai.com/v1/embeddings",
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent?key=${geminiKey}`,
       {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${openaiKey}`,
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          model: "text-embedding-3-small",
-          input: query,
+          content: {
+            parts: [{ text: query }]
+          }
         }),
       }
     );
@@ -52,8 +52,8 @@ Deno.serve(async (req) => {
       return new Response(`OpenAI error: ${err}`, { status: 500 });
     }
 
-    const { data } = await embeddingResponse.json();
-    const embedding = data[0].embedding;
+    const result = await embeddingResponse.json();
+    const embedding = result.embedding.values;
 
     // Semantic search via Supabase RPC
     const supabase = createClient(

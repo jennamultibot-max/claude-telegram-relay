@@ -120,9 +120,18 @@ async function main() {
 
   // 5. Optional
   console.log(`\n${bold("  Optional")}`);
-  env.GEMINI_API_KEY && !env.GEMINI_API_KEY.includes("your_")
-    ? pass("Voice transcription (Gemini) configured")
-    : warn("No GEMINI_API_KEY — voice messages won't be transcribed");
+
+  // Voice transcription check
+  const voiceProvider = env.VOICE_PROVIDER;
+  if (voiceProvider === "groq" && env.GROQ_API_KEY && env.GROQ_API_KEY.startsWith("gsk_")) {
+    pass("Voice transcription (Groq) configured");
+  } else if (voiceProvider === "local" && env.WHISPER_BINARY && env.WHISPER_MODEL_PATH) {
+    pass("Voice transcription (Local Whisper) configured");
+  } else if (!voiceProvider || voiceProvider.includes("your_")) {
+    warn("Voice transcription not configured");
+  } else {
+    warn(`Voice transcription configured but incomplete (${voiceProvider})`);
+  }
 
   env.USER_NAME && !env.USER_NAME.includes("Your ")
     ? pass(`Name: ${env.USER_NAME}`)
