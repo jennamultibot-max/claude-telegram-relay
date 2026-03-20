@@ -688,6 +688,68 @@ bot.command("tasks", async (ctx) => {
   }
 });
 
+bot.command("tarea", async (ctx) => {
+  const text = ctx.message.text.split(" ").slice(1).join(" ").trim();
+  console.log(`Tarea command: ${text}`);
+
+  await ctx.replyWithChatAction("typing");
+
+  // Validate task name
+  if (!text || text.length < 2) {
+    await ctx.reply("❌ La tarea necesita un nombre. Ej: `/tarea Comprar leche`");
+    return;
+  }
+
+  try {
+    // Check for @project pattern
+    const projectMatch = text.match(/@(\w+)$/);
+    let taskName = text;
+    let projectName: string | undefined;
+
+    if (projectMatch) {
+      projectName = projectMatch[1];
+      taskName = text.replace(/@\w+$/, "").trim();
+    }
+
+    let projectId: string | undefined;
+
+    // If project specified, find it
+    if (projectName) {
+      const projects = await NozbeCommands.getProjects();
+      const project = projects.find((p: NozbeProject) =>
+        p.name.toLowerCase().includes(projectName!.toLowerCase())
+      );
+
+      if (project) {
+        projectId = project.id;
+      } else {
+        await ctx.reply(`⚠️ Proyecto '@${projectName}' no encontrado. Creando en proyecto por defecto.`);
+      }
+    }
+
+    // Get default project if none specified
+    if (!projectId) {
+      const projects = await NozbeCommands.getProjects();
+      if (projects.length > 0) {
+        projectId = projects[0].id; // Use first project as default
+      } else {
+        await ctx.reply("❌ No hay proyectos en Nozbe. Crea uno primero.");
+        return;
+      }
+    }
+
+    // Create the task
+    const task = await NozbeCommands.create({
+      name: taskName,
+      projectId: projectId,
+    });
+
+    await ctx.reply(`✅ Tarea creada:\n\n**${task.name}**\nID: \`${task.id}\``, { parse_mode: "Markdown" });
+  } catch (error) {
+    await ctx.reply(`❌ Error: ${error instanceof Error ? error.message : "Unknown error"}`);
+  }
+});
+
 // Text messages
 bot.on("message:text", async (ctx) => {
   const text = ctx.message.text;
