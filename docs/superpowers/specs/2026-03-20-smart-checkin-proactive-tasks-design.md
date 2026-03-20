@@ -56,21 +56,29 @@ This design enhances the existing `examples/smart-checkin.ts` to create an intel
 
 ### 2.1 Supabase Integration
 
-**File:** `src/supabase-client.ts` (new)
+**File:** `src/memory.ts` (extend existing module)
 
 **Functionality:**
+The spec leverages existing Supabase integration patterns from `src/memory.ts` rather than creating duplicate modules. We'll extend the existing `memory.ts` with goal-specific functions.
+
 ```typescript
+// Extend existing memory.ts with goal retrieval
 interface Goal {
   id: UUID;
   content: string;
   deadline: TIMESTAMP | null;
   priority: number;
   metadata: JSONB;
+  completed_at: TIMESTAMP | null;
 }
 
-async function getGoals(): Promise<Goal[]> {
-  const result = await supabase.rpc('get_active_goals');
-  return result.data || [];
+async function getActiveGoals(): Promise<Goal[]> {
+  // Use existing getGoals() from memory.ts with type filter
+  const goals = await getGoals();
+  return goals.filter(g =>
+    g.type === 'goal' &&
+    g.completed_at === null
+  );
 }
 ```
 
@@ -78,23 +86,25 @@ async function getGoals(): Promise<Goal[]> {
 - Reads from `memory` table where `type = 'goal'`
 - Filters out completed goals (`completed_at IS NULL`)
 - Returns with priority and deadline information
+- Leverages existing Supabase client from memory.ts
 
 ### 2.2 Semantic Context Gathering
 
-**File:** `src/embedding-utils.ts` (new)
+**File:** `src/memory.ts` (extend existing module)
 
 **Functionality:**
-```typescript
-async function getRelevantContext(tasks: Goal[]): Promise<string> {
-  // Search conversational memory using embeddings
-  const relevantMemory = await supabase.rpc('match_memory', {
-    query_embedding: await generateEmbedding(tasks.join(' ')),
-    match_count: 5
-  });
+The spec uses the existing Edge Function pattern from `src/memory.ts` rather than direct RPC calls to maintain the abstraction layer.
 
-  return relevantMemory.data
-    ?.map(m => m.content)
-    .join('\n') || '';
+```typescript
+// Extend existing memory.ts with enhanced context retrieval
+async function getRelevantContext(tasks: Goal[]): Promise<string> {
+  // Use existing getRelevantContext() from memory.ts
+  // This already calls the search Edge Function
+  const context = await getRelevantContext(
+    tasks.map(t => t.content).join(' ')
+  );
+
+  return context;
 }
 ```
 
@@ -102,8 +112,28 @@ async function getRelevantContext(tasks: Goal[]): Promise<string> {
 - Past conversations about these tasks
 - Relevant facts mentioned previously
 - User preferences about similar tasks
+- Leverages existing `getRelevantContext()` implementation
 
-### 2.3 Intelligent Decision Engine
+### 2.3 Task Creation and Pattern Recognition
+
+**Goal Creation Methods:**
+
+1. **Intent Tags in Conversations:**
+   The relay parses user messages for goal patterns: `[GOAL: task description | DEADLINE: date]`
+   - Pattern: `[GOAL: "revisar informe" | DEADLINE: tomorrow]`
+   - Parsed by relay in `src/memory.ts` and stored as `type='goal'`
+
+2. **Manual Commands:**
+   User can explicitly create tasks via Telegram commands
+   - Example: `/tarea comprar leche`
+   - Stored directly in `memory` table with appropriate priority/deadline
+
+3. **Automatic Detection (Future Enhancement):**
+   System can detect phrases like "necesito hacer", "tengo que terminar"
+   - Currently requires manual creation or intent tags
+   - Future: AI-powered detection using existing patterns
+
+### 2.4 Intelligent Decision Engine
 
 **File:** `config/checkin-rules.ts` (new)
 
@@ -173,7 +203,46 @@ Claude analiza contexto + reglas de aviso
     NO → [Log: "No aviso necesario"]
 ```
 
-### 3.2 Error Handling
+### 3.2 Edge Cases and Failure Modes
+
+**No Goals Available:**
+- What if `get_active_goals()` returns no goals but there are urgent items in conversation history?
+  - **Fallback to Context Search:** Use semantic search to find urgent mentions
+  - **Threshold:** Search for "urgente", "crítico", "hoy", "mañana"
+  - **Action:** Prompt Claude about conversation urgency even without explicit goals
+
+**Timezone Mismatches:**
+- How does system handle timezone differences between server and user?
+  - **Solution:** All datetime operations use `USER_TIMEZONE` from `.env`
+  - **Consistency:** Match existing relay behavior in `src/memory.ts`
+  - **Display:** Always show times in user's timezone
+
+**Claude CLI Failures:**
+- What if Claude CLI subprocess fails or hangs?
+  - **Timeout:** 30 seconds maximum for Claude decision
+  - **Fallback:** Use simple rule-based decision if Claude unavailable
+  - **Logging:** Record all Claude CLI attempts in `logs` table
+
+**Duplicate Notifications:**
+- How are duplicate notifications prevented if check-in runs multiple times in quick succession?
+  - **Tracking:** Store `lastNotificationTime` per task ID
+  - **Deduplication:** Don't notify same task within 1 hour
+  - **Rate Limiting:** Max 2 notifications per hour total
+
+**Supabase Complete Failure:**
+- What if Supabase is completely down?
+  - **Fallback Mode:** Operate with limited functionality
+  - **Cached Data:** Use last known goal list from memory
+  - **Notification:** Alert user: "Sistema limitado: no puedo acceder a tareas recientes"
+  - **Retry Strategy:** Exponential backoff: 30s, 1m, 5m, 15m
+
+**Goal Priority Conflicts:**
+- What if multiple goals have conflicting priorities?
+  - **Resolution:** Prioritize by deadline first, then priority score
+  - **Display:** Show multiple tasks with clear ordering
+  - **User Control:** Allow user to override via commands
+
+### 3.3 Error Handling
 
 **Supabase Connection:**
 - Automatic retries (3 attempts with exponential backoff)
@@ -220,31 +289,54 @@ async function safeSupabaseCall<T>(
 ### Phase 1: Base Infrastructure (30-45 min)
 
 **Tasks:**
-1. Create Supabase MCP client module (`src/supabase-client.ts`)
-2. Modify `getGoals()` in `smart-checkin.ts` to use `get_active_goals()`
-3. Add basic error handling with logging
+1. Extend `src/memory.ts` with `getActiveGoals()` function leveraging existing Supabase client
+2. Modify `getGoals()` in `smart-checkin.ts` to use `get_active_goals()` RPC
+3. Add basic error handling with logging to `logs` table
 
 **Deliverables:**
 - Working Supabase connection from smart check-in
 - Error logging to database
-- Verified goal retrieval
+- Verified goal retrieval via existing patterns
+
+### Phase 0: Verify Existing Integration (15-20 min)
+
+**Tasks:**
+1. Test `get_active_goals()` RPC function with existing goals
+2. Verify `getRelevantContext()` works with conversation data
+3. Confirm timezone handling matches relay behavior
+
+**Deliverables:**
+- Verified Supabase integration and data quality
+- Confirmed existing patterns work correctly
+
+### Phase 1: Base Infrastructure (30-45 min)
+
+**Tasks:**
+1. Extend `src/memory.ts` with `getActiveGoals()` function leveraging existing Supabase client
+2. Modify `getGoals()` in `smart-checkin.ts` to use `get_active_goals()` RPC
+3. Add basic error handling with logging to `logs` table
+
+**Deliverables:**
+- Working Supabase connection from smart check-in
+- Error logging to database
+- Verified goal retrieval via existing patterns
 
 ### Phase 2: Intelligent Context (45-60 min)
 
 **Tasks:**
-1. Implement `getRelevantContext()` in `src/embedding-utils.ts`
-2. Integrate with Supabase Edge Function for embeddings
-3. Test semantic search functionality
+1. Extend `src/memory.ts` with enhanced `getRelevantContext()` leveraging existing Edge Function
+2. Test semantic search functionality with conversation data
+3. Implement context aggregation for Claude decision making
 
 **Deliverables:**
-- Working embedding generation
+- Working embedding generation via existing pattern
 - Semantic search in conversational memory
 - Context-aware decision making
 
 ### Phase 3: Enhanced Decision Engine (30-45 min)
 
 **Tasks:**
-1. Create `config/checkin-rules.ts` with notification rules
+1. Create `config/checkin-rules.ts` with notification rules aligned with existing state management
 2. Improve Claude prompt with complete context
 3. Test different notification scenarios
 
@@ -259,11 +351,13 @@ async function safeSupabaseCall<T>(
 1. Connect complete flow (Supabase → Claude → Telegram)
 2. Configure automatic scheduling (cron/launchd)
 3. Final testing of complete system
+4. Setup metrics collection and logging
 
 **Deliverables:**
 - Complete working system
 - Scheduled execution every 30 minutes
 - Full integration testing completed
+- Active metrics collection
 
 ---
 
@@ -335,7 +429,62 @@ Claude: Analyzes and decides to notify
 - Check-in reads and analyzes these tasks
 - Both use the same database
 
-### 7.3 Future Scalability
+### 7.3 State Synchronization with Main Relay
+
+**Last Message Time Tracking:**
+- Relay updates `lastMessageTime` when user sends messages
+- Smart check-in reads this value from database or shared state
+- Used to determine if user is active or away
+
+**Synchronization Methods:**
+
+1. **Database-Based Tracking (Preferred):**
+```typescript
+// Query latest user activity
+async function getLastActivity(): Promise<string> {
+  const result = await supabase
+    .from('messages')
+    .select('created_at')
+    .eq('role', 'user')
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .single();
+
+  const lastMsg = new Date(result.data.created_at);
+  const hoursSince = (Date.now() - lastMsg.getTime()) / (1000 * 60 * 60);
+
+  return `Último mensaje: hace ${hoursSince.toFixed(1)} horas`;
+}
+```
+
+2. **Shared State File (Alternative):**
+```typescript
+// Read/write shared state file
+interface SharedState {
+  lastUserMessage: string;
+  lastCheckinTime: string;
+  pendingNotifications: string[];
+}
+```
+
+**Integration Point:**
+```typescript
+// In smart-checkin.ts
+const lastActivity = await getLastActivity();
+const context = {
+  ...relevantContext,
+  lastActivity,
+  userTimezone: process.env.USER_TIMEZONE
+};
+```
+
+**Benefits of Database-Based Tracking:**
+- Single source of truth for user activity
+- Automatic persistence without file management
+- Works across multiple check-in instances
+- Consistent with relay's message tracking
+
+### 7.4 Future Scalability
 
 **Easy to Add:**
 - New notification rules (in `checkin-rules.ts`)
@@ -443,6 +592,69 @@ function logError(event: string, error: any): void {
 
 ---
 
+## 9. Metrics and Observability
+
+### 9.1 Key Performance Indicators (KPIs)
+
+**Success Rate Metrics:**
+- `notification_success_rate`: % of successful Telegram sends / total attempts
+- `claude_decision_accuracy`: % of decisions that match expected user behavior
+- `relevant_context_quality`: Average semantic similarity score for context retrieved
+
+**Performance Metrics:**
+- `avg_execution_time`: Time from check-in start to decision (target < 30s)
+- `supabase_query_latency`: Time for RPC calls (target < 2s)
+- `embedding_cache_hit_rate`: % of embeddings served from cache (target > 70%)
+
+**User Experience Metrics:**
+- `false_positive_rate`: % of notifications that user considered unnecessary
+- `task_completion_correlation`: % of completed tasks that were proactively mentioned
+- `daily_notification_count`: Average notifications per day (target 1-2)
+
+### 9.2 Logging Strategy
+
+**Event Types to Track:**
+```typescript
+interface CheckinLog {
+  timestamp: TIMESTAMP;
+  event: 'checkin_start' | 'checkin_complete' | 'claude_decision' | 'notification_sent' | 'error';
+  duration_ms?: number;
+  metadata: {
+    goalCount?: number;
+    decision?: 'YES' | 'NO';
+    urgency?: 'urgent' | 'reminder' | 'progress';
+    errorType?: string;
+  };
+}
+```
+
+**Critical Events to Log:**
+- Every check-in execution start and completion
+- All Claude decisions with reasoning
+- All Telegram notifications with status
+- All errors with retry attempts
+- Cache hit/miss statistics
+
+**Log Retention:**
+- Store in `logs` table with `event = 'smart_checkin'`
+- Retention: 30 days (configurable via environment)
+- Index: `created_at DESC` for performance queries
+
+### 9.3 Alerting Strategy
+
+**System Health Alerts:**
+- `error_rate > 10%`: Alert about potential infrastructure issues
+- `avg_execution_time > 30s`: Performance degradation alert
+- `notification_success_rate < 90%`: Delivery system problem alert
+- `claude_decision_accuracy < 70%`: Decision quality degradation alert
+
+**User Feedback Collection:**
+- Simple feedback mechanism: `?bueno` or `?mal` after notifications
+- Track sentiment of user responses
+- Use feedback to tune notification rules over time
+
+---
+
 ## 10. Testing Strategy
 
 ### Unit Tests
@@ -465,13 +677,61 @@ function logError(event: string, error: any): void {
 
 ## Success Criteria
 
-✅ Smart check-in connects to Supabase and retrieves active goals
-✅ Semantic search provides relevant conversational context
+✅ Smart check-in extends existing `src/memory.ts` with goal retrieval functions
+✅ Semantic search uses existing Edge Function pattern for consistency
 ✅ Claude makes intelligent notification decisions based on complete context
 ✅ Telegram notifications are sent with appropriate urgency levels
-✅ Error handling prevents system failures
+✅ Error handling prevents system failures with fallback mechanisms
 ✅ Performance optimizations reduce costs and improve response time
 ✅ System integrates seamlessly with existing relay functionality
+✅ State synchronization works correctly with main relay
+✅ Metrics collection enables monitoring and optimization
+
+---
+
+## 11. Migration Considerations
+
+**Existing Data Compatibility:**
+- Users may have existing goals in `memory` table without priority/deadline fields
+- **Solution:** Graceful handling of missing fields with default values
+- **Migration Path:** Gradual enhancement with backwards compatibility
+
+**Goal Structure Evolution:**
+```typescript
+// Support both legacy and new goal structures
+interface LegacyGoal {
+  id: UUID;
+  content: string;
+  type: 'goal';
+  created_at: TIMESTAMP;
+  // May not have priority/deadline
+}
+
+interface EnhancedGoal extends LegacyGoal {
+  deadline: TIMESTAMP | null;
+  priority: number;
+  metadata: JSONB;
+}
+
+function normalizeGoal(goal: LegacyGoal | EnhancedGoal): EnhancedGoal {
+  return {
+    ...goal,
+    deadline: goal.deadline || null,
+    priority: goal.priority || 1,
+    metadata: goal.metadata || {}
+  };
+}
+```
+
+**Backwards Compatibility:**
+- Smart check-in works with existing goals (priority/deadline optional)
+- Notification rules use defaults for missing fields
+- No breaking changes to existing relay functionality
+
+**User Experience Considerations:**
+- Gradual rollout: Start with low-priority notifications, increase volume
+- User education: Explain system changes before first notifications
+- Feedback mechanism: Easy way to provide feedback on notifications
 
 ---
 
@@ -485,6 +745,14 @@ function logError(event: string, error: any): void {
 
 ---
 
-**Design Version:** 1.0
+**Design Version:** 1.1 (Updated based on reviewer feedback)
 **Status:** Awaiting User Approval
 **Author:** Claude Code (with brainstorming skill)
+**Changes from v1.0:**
+- Leveraged existing `src/memory.ts` patterns instead of creating duplicate modules
+- Added task creation and pattern recognition section
+- Added edge cases and failure modes specification
+- Added metrics and observability section
+- Added state synchronization with main relay
+- Updated implementation phases to include verification phase
+- Added migration considerations for backwards compatibility
