@@ -315,3 +315,32 @@ export async function createTask(data: CreateTaskData): Promise<NozbeTask> {
     throw error;
   }
 }
+
+/**
+ * Mark a task as completed by setting ended_at
+ * @param taskId Task ID
+ * @returns Promise<boolean> True if successful
+ */
+export async function completeTask(taskId: string): Promise<boolean> {
+  try {
+    const response = await fetchNozbe(`/api/tasks/${taskId}`, {
+      method: "PUT",
+      body: JSON.stringify({
+        ended_at: new Date().toISOString(),
+      }),
+    });
+
+    if (response.status === 404) {
+      throw new Error("No encontré esa tarea. Verifica el ID");
+    }
+
+    if (!response.ok) {
+      throw new Error(`Failed to complete task: ${response.statusText}`);
+    }
+
+    return true;
+  } catch (error) {
+    console.error("Error completing task:", error);
+    throw error;
+  }
+}
