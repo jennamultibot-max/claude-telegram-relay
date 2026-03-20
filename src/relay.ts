@@ -246,6 +246,46 @@ async function fetchGwsIfNeeded(query: string): Promise<string | undefined> {
   }
 }
 
+/**
+ * Detect if user is asking about Nozbe tasks and fetch data directly
+ * This prevents Claude from needing to know Nozbe command syntax
+ */
+async function fetchNozbeIfNeeded(query: string): Promise<string | undefined> {
+  const lowerQuery = query.toLowerCase();
+
+  // Keywords that indicate task/Nozbe interest
+  const taskKeywords = [
+    'tarea', 'tareas', 'nozbe', 'pendiente', 'pendientes',
+    'completar', 'terminar', 'acabar', 'proyecto', 'proyectos'
+  ];
+
+  const hasTaskKeyword = taskKeywords.some(keyword => lowerQuery.includes(keyword));
+
+  if (!hasTaskKeyword) {
+    return undefined;
+  }
+
+  console.log("Task-related query detected, fetching Nozbe data...");
+
+  try {
+    // Get active tasks
+    const tasks = await getTasks({ status: "active" });
+
+    if (tasks.length === 0) {
+      return "**NOZBE DATA (pre-fetched):**\n\nNo hay tareas activas en este momento.";
+    }
+
+    // Format tasks for context
+    const tasksList = NozbeCommands.formatTasksList(tasks);
+
+    return `**NOZBE DATA (pre-fetched):**\n\n${tasksList}\n\n...`;
+  } catch (error) {
+    console.error("Nozbe fetch failed:", error);
+    // Don't include error in response, just log it
+    return undefined;
+  }
+}
+
 // ============================================================
 // CORE: Call Claude CLI
 // ============================================================
