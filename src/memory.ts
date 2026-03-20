@@ -81,6 +81,45 @@ export async function processMemoryIntents(
 }
 
 /**
+ * Get recent conversation messages for context.
+ * This helps maintain conversation continuity between messages.
+ */
+export async function getRecentMessages(
+  supabase: SupabaseClient | null,
+  limit: number = 10
+): Promise<string> {
+  if (!supabase) return "";
+
+  try {
+    const { data, error } = await supabase
+      .from("messages")
+      .select("role, content, created_at")
+      .order("created_at", { ascending: false })
+      .limit(limit);
+
+    if (error) {
+      console.error("Error fetching recent messages:", error);
+      return "";
+    }
+
+    if (!data || data.length === 0) return "";
+
+    // Reverse to show oldest first (conversation order)
+    const reversed = [...data].reverse();
+
+    return (
+      "RECENT CONVERSATION:\n" +
+      reversed
+        .map((m: any) => `[${m.role}]: ${m.content}`)
+        .join("\n")
+    );
+  } catch (error) {
+    console.error("Recent messages error:", error);
+    return "";
+  }
+}
+
+/**
  * Get all facts and active goals for prompt context.
  */
 export async function getMemoryContext(
