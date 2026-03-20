@@ -198,6 +198,54 @@ bot.use(async (ctx, next) => {
 });
 
 // ============================================================
+// GWS PRE-FETCHING FOR NATURAL LANGUAGE QUERIES
+// ============================================================
+
+/**
+ * Detect if user is asking about Gmail/emails and fetch data directly
+ * This prevents Claude from trying to execute gws commands that need approval
+ */
+async function fetchGwsIfNeeded(query: string): Promise<string | undefined> {
+  const lowerQuery = query.toLowerCase();
+
+  // Keywords that indicate email/Gmail interest
+  const emailKeywords = [
+    'email', 'e-mail', 'correo', 'correos', 'gmail', 'mail',
+    'bandeja', 'entrada', 'inbox', 'mensajes pendientes',
+    'emails', 'mails'
+  ];
+
+  const hasEmailKeyword = emailKeywords.some(keyword => lowerQuery.includes(keyword));
+
+  if (!hasEmailKeyword) {
+    return undefined;
+  }
+
+  console.log("Email-related query detected, fetching Gmail data...");
+
+  try {
+    const result = await executeGws({
+      service: "gmail",
+      resource: "users",
+      method: "messages",
+      params: '{"pageSize": 10}',
+      format: "json",
+    });
+
+    if (result.success) {
+      console.log("Gmail data fetched successfully");
+      return `\n\n**GMAIL DATA (pre-fetched):**\n${result.output}\n\nUse this data to answer the user's question about emails. Do NOT try to execute gws commands - the data is already provided above.`;
+    } else {
+      console.log("Gmail fetch failed:", result.error);
+      return undefined;
+    }
+  } catch (error) {
+    console.error("Error fetching Gmail data:", error);
+    return undefined;
+  }
+}
+
+// ============================================================
 // CORE: Call Claude CLI
 // ============================================================
 
@@ -565,6 +613,12 @@ bot.on("message:text", async (ctx) => {
     }
   }
 
+  // Pre-fetch GWS data if user is asking about emails (prevents approval prompts)
+  const gwsData = await fetchGwsIfNeeded(text);
+  if (gwsData) {
+    await ctx.replyWithChatAction("typing");
+  }
+
   // Gather context: recent conversation + semantic search + facts/goals
   const [recentMessages, relevantContext, memoryContext] = await Promise.all([
     getRecentMessages(supabase, 10),
@@ -572,7 +626,7 @@ bot.on("message:text", async (ctx) => {
     getMemoryContext(supabase),
   ]);
 
-  const enrichedPrompt = buildPrompt(text, recentMessages, relevantContext, memoryContext, webSearchResults);
+  const enrichedPrompt = buildPrompt(text, recentMessages, relevantContext, memoryContext, webSearchResults, gwsData);
   const rawResponse = await callClaude(enrichedPrompt, { resume: true });
 
   // Parse and save any memory intents, strip tags from response
@@ -624,6 +678,12 @@ bot.on("message:voice", async (ctx) => {
       }
     }
 
+    // Pre-fetch GWS data if voice message is about emails
+    const gwsData = await fetchGwsIfNeeded(transcription);
+    if (gwsData) {
+      await ctx.replyWithChatAction("typing");
+    }
+
     const [recentMessages, relevantContext, memoryContext] = await Promise.all([
       getRecentMessages(supabase, 10),
       getRelevantContext(supabase, transcription),
@@ -635,7 +695,8 @@ bot.on("message:voice", async (ctx) => {
       recentMessages,
       relevantContext,
       memoryContext,
-      webSearchResults
+      webSearchResults,
+      gwsData
     );
     const rawResponse = await callClaude(enrichedPrompt, { resume: true });
     const claudeResponse = await processMemoryIntents(supabase, rawResponse);
@@ -848,7 +909,8 @@ function buildPrompt(
   recentMessages?: string,
   relevantContext?: string,
   memoryContext?: string,
-  webSearchResults?: string
+  webSearchResults?: string,
+  gwsData?: string
 ): string {
   const now = new Date();
   const timeStr = now.toLocaleString("en-US", {
@@ -879,6 +941,9 @@ function buildPrompt(
     parts.push(`\n${webSearchResults}`);
     parts.push("\nIMPORTANT: Use the web search results above to answer the user's question. The results provide current information that may be more relevant than your training data.");
   }
+  if (gwsData) {
+    parts.push(`\n${gwsData}`);
+  }
   if (memoryContext) parts.push(`\n${memoryContext}`);
   if (relevantContext) parts.push(`\n${relevantContext}`);
 
@@ -892,24 +957,11 @@ function buildPrompt(
   );
 
   parts.push(
-    "\n\nGOOGLE WORKSPACE INTEGRATION (gws CLI):" +
-      "\nYou can use the gws CLI to interact with Google Workspace services: Gmail, Calendar, Drive, Sheets, etc." +
-      "\n\nAvailable services:" +
-      "\n- gmail: send, read, manage email" +
-      "\n- drive: manage files, folders, shared drives" +
-      "\n- sheets: read and write spreadsheets" +
-      "\n- calendar: manage calendars and events" +
-      "\n- docs: read and write Google Docs" +
-      "\n- tasks: manage task lists and tasks" +
-      "\n- people: manage contacts and profiles" +
-      "\n\nCommon commands:" +
-      "\n- List emails: gmail users messages list --params '{\"pageSize\": 10}'" +
-      "\n- List files: drive files list --params '{\"pageSize\": 20}'" +
-      "\n- List events: calendar events list --params '{\"maxResults\": 10}'" +
-      "\n- Get spreadsheet: sheets spreadsheets get --params '{\"spreadsheetId\": \"...\"}'" +
-      "\n\nWhen the user asks about Gmail, Calendar, Drive, or other Google services, use the gws CLI to help them." +
-      "\nThe gws CLI is available globally. You don't need to prefix commands with any path." +
-      "\nExecute gws commands and present the results in a user-friendly way." +
+    "\n\nGOOGLE WORKSPACE INTEGRATION:" +
+      "\nWhen the user asks about Gmail, Calendar, Drive, or other Google services, the relevant data will be provided above (prefetched)." +
+      "\nUse the provided data to answer the user's question." +
+      "\nDO NOT try to execute gws commands yourself - the data is already included in the prompt if relevant." +
+      "\nPresent Google Workspace data in a user-friendly way." +
       "\n\nThe user can also use the /gws command directly for specific operations."
   );
 
