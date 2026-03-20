@@ -382,3 +382,51 @@ export async function addComment(taskId: string, text: string): Promise<boolean>
     throw error;
   }
 }
+
+// ============================================================
+// FORMATTING FOR TELEGRAM
+// ============================================================
+
+/**
+ * Format tasks list for Telegram display
+ * @param tasks Array of tasks to format
+ * @returns Formatted string with emojis and task details
+ */
+export function formatTasksList(tasks: NozbeTask[]): string {
+  if (tasks.length === 0) {
+    return "📭 No hay tareas.";
+  }
+
+  let output = `📧 **${tasks.length} tareas encontradas**\n\n`;
+
+  tasks.forEach((task, index) => {
+    const emoji = getStatusEmoji(task);
+    const priority = task.priority > 0 ? ` ${"⭐".repeat(task.priority)}` : "";
+    const due = task.due_date ? ` 📅 ${new Date(task.due_date).toLocaleDateString("es-ES")}` : "";
+    const project = task.project_name ? ` 📁 ${task.project_name}` : "";
+
+    output += `${index + 1}. ${emoji} **${task.name}**${priority}${due}${project}\n`;
+    output += `   ID: \`${task.id}\`\n\n`;
+  });
+
+  return output;
+}
+
+/**
+ * Get status emoji for a task
+ * @param task Task to get emoji for
+ * @returns Emoji string representing task status
+ */
+function getStatusEmoji(task: NozbeTask): string {
+  if (task.status === "completed") return "✅";
+
+  if (task.due_date) {
+    const dueDate = new Date(new Date(task.due_date).toLocaleString("en-US", { timeZone: USER_TIMEZONE }));
+    const today = getUserToday();
+
+    if (dueDate < today) return "⚠️";
+    if (dueDate.toDateString() === today.toDateString()) return "🔴";
+  }
+
+  return "📋";
+}
