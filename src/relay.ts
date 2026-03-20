@@ -36,7 +36,7 @@ import {
 } from "./status-terminal.ts";
 import { getStatusBar } from "./status-bar.ts";
 import { executeGws, GwsCommands, listInboxWithContent } from "./gws-helper.ts";
-import { NozbeCommands, getTasks } from "./nozbe-helper.ts";
+import { NozbeCommands, getTasks, NozbeProject } from "./nozbe-helper.ts";
 
 const PROJECT_ROOT = dirname(dirname(import.meta.path));
 
@@ -632,6 +632,57 @@ bot.command("gws", async (ctx) => {
     } else {
       await ctx.reply(output);
     }
+  } catch (error) {
+    await ctx.reply(`❌ Error: ${error instanceof Error ? error.message : "Unknown error"}`);
+  }
+});
+
+// Nozbe commands
+bot.command("nozbe", async (ctx) => {
+  const args = ctx.message.text.split(" ").slice(1).join(" ");
+  console.log(`Nozbe command: ${args}`);
+
+  await ctx.replyWithChatAction("typing");
+
+  try {
+    // If project name provided, list tasks for that project
+    if (args) {
+      const projects = await NozbeCommands.getProjects();
+      const project = projects.find((p: NozbeProject) =>
+        p.name.toLowerCase().includes(args.toLowerCase())
+      );
+
+      if (!project) {
+        await ctx.reply(`❌ Proyecto "${args}" no encontrado. Proyectos disponibles:\n${projects.map((p: NozbeProject) => p.name).join(", ")}`);
+        return;
+      }
+
+      const tasks = await NozbeCommands.listByProject(project.id);
+      const output = NozbeCommands.formatTasksList(tasks);
+      await ctx.reply(output, { parse_mode: "Markdown" });
+      return;
+    }
+
+    // List all active tasks
+    const tasks = await NozbeCommands.listActive();
+    const output = NozbeCommands.formatTasksList(tasks);
+    await ctx.reply(output, { parse_mode: "Markdown" });
+  } catch (error) {
+    await ctx.reply(`❌ Error: ${error instanceof Error ? error.message : "Unknown error"}`);
+  }
+});
+
+// Alias for /nozbe
+bot.command("tasks", async (ctx) => {
+  const args = ctx.message.text.split(" ").slice(1).join(" ");
+  console.log(`Tasks command: ${args}`);
+
+  await ctx.replyWithChatAction("typing");
+
+  try {
+    const tasks = await NozbeCommands.listActive();
+    const output = NozbeCommands.formatTasksList(tasks);
+    await ctx.reply(output, { parse_mode: "Markdown" });
   } catch (error) {
     await ctx.reply(`❌ Error: ${error instanceof Error ? error.message : "Unknown error"}`);
   }
