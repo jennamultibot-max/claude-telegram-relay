@@ -775,6 +775,39 @@ bot.command("completar", async (ctx) => {
   }
 });
 
+bot.command("comentario", async (ctx) => {
+  const parts = ctx.message.text.split(" ");
+  const taskId = parts[1]?.trim();
+  const text = parts.slice(2).join(" ").trim();
+  console.log(`Comentario command: taskId=${taskId}, text=${text}`);
+
+  await ctx.replyWithChatAction("typing");
+
+  // Validate task ID
+  if (!taskId) {
+    await ctx.reply("❌ Necesito el ID de la tarea. Ej: `/comentario abc123 Tu texto`");
+    return;
+  }
+
+  // Validate comment text
+  if (!text || text.length < 2) {
+    await ctx.reply("❌ Necesito el texto del comentario. Ej: `/comentario abc123 Tu texto`");
+    return;
+  }
+
+  try {
+    const success = await NozbeCommands.comment(taskId, text);
+
+    if (success) {
+      await ctx.reply("✅ Comentario añadido");
+    } else {
+      await ctx.reply("❌ No se pudo añadir el comentario");
+    }
+  } catch (error) {
+    await ctx.reply(`❌ Error: ${error instanceof Error ? error.message : "Unknown error"}`);
+  }
+});
+
 // Text messages
 bot.on("message:text", async (ctx) => {
   const text = ctx.message.text;
