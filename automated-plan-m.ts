@@ -7,7 +7,7 @@
 
 import { chromium } from "playwright";
 import { createTask, addComment, getProjects } from "./src/nozbe-helper.js";
-import { writeFileSync } from "fs";
+import { writeFileSync, readFileSync, existsSync } from "fs";
 import { join } from "path";
 
 // OVTLYR Credentials
@@ -17,6 +17,7 @@ const OVTLYR_PASSWORD = "Extinct8-Hypnosis7-Clatter5-Stubbly7-Venture5";
 // File paths
 const SCRIPT_DIR = "/Users/german/seconbrain";
 const ANALYSIS_FILE = join(SCRIPT_DIR, "PLAN_M_ANALISIS_FINAL.txt");
+const LAST_RUN_FILE = join(SCRIPT_DIR, "claude-telegram-relay", ".plan_m_last_run.txt");
 
 // ============================================================
 // OVTLYR EXTRACTION
@@ -420,11 +421,55 @@ async function saveToNozbe(analysis: string): Promise<void> {
 }
 
 // ============================================================
+// RUN PREVENTION (avoid duplicate runs on same day)
+// ============================================================
+
+function hasRunToday(): boolean {
+  if (!existsSync(LAST_RUN_FILE)) {
+    return false;
+  }
+
+  try {
+    const lastRunContent = readFileSync(LAST_RUN_FILE, 'utf-8').trim();
+    const lastRunDate = new Date(lastRunContent);
+    const today = new Date();
+
+    // Check if last run was today
+    return (
+      lastRunDate.getDate() === today.getDate() &&
+      lastRunDate.getMonth() === today.getMonth() &&
+      lastRunDate.getFullYear() === today.getFullYear()
+    );
+  } catch (error) {
+    console.log("⚠️  Could not read last run file, proceeding with analysis");
+    return false;
+  }
+}
+
+function markAsRun() {
+  const now = new Date().toISOString();
+  writeFileSync(LAST_RUN_FILE, now, 'utf-8');
+  console.log(`✅ Marked as run: ${now}`);
+}
+
+// ============================================================
 // MAIN FUNCTION
 // ============================================================
 
 async function main() {
   const startTime = Date.now();
+
+  // Check if already ran today
+  if (hasRunToday()) {
+    console.log("=".repeat(60));
+    console.log("📊 PLAN M ANALYSIS - Already completed today");
+    console.log("=".repeat(60));
+    console.log(`⏰ Current time: ${new Date().toLocaleString('es-ES', { timeZone: 'Europe/Madrid' })}`);
+    console.log("ℹ️  Analysis was already run today. Skipping duplicate execution.");
+    console.log("=".repeat(60));
+    return;
+  }
+
   console.log("=".repeat(60));
   console.log("🎯 AUTOMATED PLAN M ANALYSIS (CORRECTED VERSION)");
   console.log("=".repeat(60));
@@ -450,6 +495,9 @@ async function main() {
 
     // Save to Nozbe
     await saveToNozbe(analysis);
+
+    // Mark as successfully run
+    markAsRun();
 
     const duration = ((Date.now() - startTime) / 1000).toFixed(1);
     console.log("\n" + "=".repeat(60));
