@@ -6,7 +6,29 @@ Sistema automatizado de análisis diario del Plan M de trading usando datos de O
 
 ## Horario de Ejecución
 
-**Programado:** Todos los días a las **2:00 PM (hora española)**
+**Programado:** Lunes a Viernes a las **2:00 PM (hora española)**
+- **NO se ejecuta** sábado ni domingo (mercado cerrado)
+
+## Análisis de Costes
+
+### Coste MONETARIO: 0€
+- ✅ Corre localmente (tu ordenador)
+- ✅ Sin APIs de pago (OVTLYR scraping + Nozbe REST gratuito)
+- ✅ Sin servicios cloud (AWS, Lambda, etc.)
+
+### Recursos por Ejecución
+- **Tiempo:** ~20-25 segundos
+- **CPU:** Playwright Chromium headless
+- **RAM:** ~200-300 MB
+- **Red:** ~2-3 MB de datos
+
+### Coste Energético
+- 20 segundos/día × 5 días = 100 segundos/semana
+- MacBook Pro: ~30W en uso activo
+- 100s × 30W = 3000Ws = 0.003 kWh/semana
+- **Coste electricidad:** ~0.21€/kWh → **0.0006€/semana** = **0.03€/año**
+
+**Conclusión:** Coste despreciable, el sistema es prácticamente gratuito.
 
 **Si el ordenador está apagado a las 2:00 PM:**
 - El script se ejecutará automáticamente al encender el ordenador
